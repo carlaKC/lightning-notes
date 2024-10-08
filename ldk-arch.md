@@ -126,7 +126,34 @@ Event Handling Closure:
     otherwise no-op
 - Finally, call the user-provided closure with the event
 
-# STFU Implementation in LDK
+# Details
+
+## ChannelManager
+
+- Doesn't really seem to have the concept of individual channels?
+  - Has some node-level items, like pending payments and receives
+  - Forwards are expressed generically, not per-channel
+  - Pending channels are tracked in a single batch
+  - There is some per-peer state tracked:
+    - `channel_by_id`: All channels with the peer by chan_id, holds
+      the full channel state if the channel has been fully funded
+    - Messages to send to the peer 
+- Adding a HTLC:
+  - Decode htlc and check that we can forward it `decode_update_add_htlc_onion`
+  - Lookup peer and the channel the HTLC is for
+  - `construct_pending_htlc_status` creates a `PendingHTLCStatus`:
+    - `create_fwd_pending_htlc_info`: Forward the HTLC
+    - `create_recv_pending_htlc_info`: Receive the payment
+    - Otherwise error accordingly
+  - Check `can_accept_incoming_htlc` which looks at channel constraints
+    (dust, in flight etc)
+  - `try_chan_phase_entry` with `update_add_htlc`
+    - Checks that the state of the channel and the HTLC are sane
+      - Eg, we're not shutting down
+      - Eg, the HTLC is non-zero / not larger than channel
+    - Add to `pending_inbound_htlcs` if all checks are okay
+
+## STFU Implementation in LDK
 
 `msgs.rs`:
 - Contains all of the p2p messages in the LN protocol
