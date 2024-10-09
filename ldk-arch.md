@@ -138,6 +138,38 @@ Event Handling Closure:
     the full channel state if the channel has been fully funded
   - Messages to send to the peer 
 
+Restarts:
+- To reload from disk, the `ChannelManager` requires all of the
+  deserialized `ChanelMonitor`s that we stored
+- `ChannelManager` is loaded from disk + args provided elsewhere,
+  if there are inconsistencies with `ChannelMonitor` you may trigger a
+  force close
+
+Writable: what does `ChannelManager` actually persist?
+- Chain hash, best block height and hash
+- Channel count + each `Channel`:
+  - Channel ID
+  - Channel state (in funding process)
+  - Channel size sats
+  - latest monitor update id <- what's this?
+  - Upfront shutdown pubkey
+  - Current commitment number for each party
+  - Any HTLCs that we need to remember (inbound and outbound)
+  - Preimages for HTLCs that we know
+  - Whether to send RAA of Commitment next / what's pending in exchange
+  *TODO*: get full picture of what's stored here
+- HTLC count:
+  - SCID
+    - Forward count: forwards:
+      - Adds: PendingHTLCInfo
+      - Failures: HTLC ID + ErrPacket
+      - Malformed: HTLC ID + code + dummy err pkt + sha
+- Claimable payments count / payments:
+  - Hash / payment HTLCs:
+    - what's written for HTLCs
+
+TODO: continue looking at what's persisted (L11894)
+    
 ### Commitment Dance
 
 #### Adding a HTLC
@@ -201,13 +233,57 @@ Event Handling Closure:
     - We don't have any pending outgoing HTLCs at this point, so there's
       no action for `pending_outbound_htlcs`
   - Create a `ChannelMonitorUpdate` that has the new commitment info
-  - if there is a `monitor_update`, `handle_new_monitor_update`
+  - `monitor_updating_paused`:
+    - Called when we know that we haven't persisted an update for the
+      `ChanelMonitor`
+    - There are a bunch of state-machine related varaibles here:
+      - pending_revoke_and_ack / commitment_signed etc
+  - Update is pushed onto the channel's queue:
+    - If there are blocked updates, the user can't handle it now
+    - If there's nothing queued, then return for the user to persist
+    - These are stored in `blocked_monitor_updates` on the channel
+  - `handle_new_monitor_update`
+    - update_channel: notify chain monitor of new updates
+    - `handle_monitor_update(self, updates_res, chan, _internal)`:
+      - ??
+Resume on 8315
+handle_new_monitor_update(
+  ident: ChannelManager,
+  expr: FundingUTXO,
+    ChannelMonitorUpdate {
+	  update_id: self.context.latest_monitor_update_id,
+	  counterparty_node_id: Some(self.context.counterparty_node_id),
+	  updates: vec![ChannelMonitorUpdateStep::LatestHolderCommitmentTXInfo {
+	    commitment_tx: holder_commitment_tx,
+	    htlc_outputs: htlcs_and_sigs,
+	    claimed_htlcs,
+	    nondust_htlc_sources,
+	  }],
+	channel_id: Some(self.context.channel_id()),
+  },
+  expr: MonitorUpdate,
+  expr: peer_state_lock,
+  expr: peer_state,
+  expr: per_peer_state, 
+  expr: Channel,
+)
+
+### Handling Update
 
 ### Sending Revoke and ACK
 
 What background task triggers a revoke and ack?
 - Probably done in `handle_new_monitor_update`?
 handle_monitor_update_completion calls handle_channel_resumption
+
+## ChannelMonitor
+
+- Responsible for the on-chain actions related to a channel
+- We get a channel monitor back in the funding dance when we need to 
+  start watching the chain (ie, we've signed)
+- We call `ChainMonitor.watch_channel` to report the channel's existence
+- Channel mointors are given to the `ChannelManger` via 
+  `ChannelManagerReadArgs`: things that we don't
 
 ## STFU Implementation in LDK
 
