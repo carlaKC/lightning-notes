@@ -130,16 +130,32 @@ Event Handling Closure:
 
 ## ChannelManager
 
-- Doesn't really seem to have the concept of individual channels?
-  - Has some node-level items, like pending payments and receives
-  - Forwards are expressed generically, not per-channel
-  - Pending channels are tracked in a single batch
-  - There is some per-peer state tracked:
-    - `channel_by_id`: All channels with the peer by chan_id, holds
-      the full channel state if the channel has been fully funded
-    - Messages to send to the peer 
-- Adding a HTLC:
-  - Decode htlc and check that we can forward it `decode_update_add_htlc_onion`
+- Has some node-level items, like pending payments and receives
+- Forwards are expressed generically, not per-channel
+- Pending channels are tracked in a single batch
+- There is some per-peer state tracked:
+  - `channel_by_id`: All channels with the peer by chan_id, holds
+    the full channel state if the channel has been fully funded
+  - Messages to send to the peer 
+
+### Commitment Dance
+
+#### Adding a HTLC
+- Once a channel has been fully opened, it's going to be tracked in
+  the `ChannelManger`'s `per_peer_state`:
+  - `channel_by_id` will have `ChannelPhase::Funded(Channel)`
+- When the `PeerManager` gets an `update_add_htlc`, it'll call 
+  'handle_update_add_htlc` on its `ChannelMessageHandler` (which is
+  implemented by `ChannelManger`
+- `internal_update_add_htlc` returns an indication of whether we need
+  to do any persistence after this operation:
+  - If something has gone so wrong that we have to close the channel,
+    then we notify that persistence is required
+  - SkipPersistHandleEvents:
+  - SkipPersistNoEvents:
+- `internal_update_add_htlc`:
+  - Decode htlc and check that we can forward it 
+    `decode_update_add_htlc_onion`
   - Lookup peer and the channel the HTLC is for
   - `construct_pending_htlc_status` creates a `PendingHTLCStatus`:
     - `create_fwd_pending_htlc_info`: Forward the HTLC
@@ -151,7 +167,47 @@ Event Handling Closure:
     - Checks that the state of the channel and the HTLC are sane
       - Eg, we're not shutting down
       - Eg, the HTLC is non-zero / not larger than channel
-    - Add to `pending_inbound_htlcs` if all checks are okay
+    - Add to `pending_inbound_htlcs` if all checks are okay with state
+      `RemoteAnnounced`
+
+### Receiving a Commitment
+- When the `PeerManager` gets a `commitment_signed`, it will call
+  `handle_commitment_signed` on its `ChannelMessageHandler` (which is
+  implemented by `ChannelManager`)
+- We `notify_on_drop` the `PersistenceNotifier`, indicating that we 
+  must persist once this function is done
+- `internal_commitment_signed`:
+  - `local` = true (determines direction of HTLCs for tx)
+  - `generated_by_local` = false (only add proposed htlcs)
+  - Fetches the channel and asserts that it's reached the funded stage
+  - `try_chan_phase_entry` with `commitment_signed`
+    - Sanity checks on the channel's state for update
+    - `build_commitment_transaction`:
+      - Gets inbound `pending_inbound_htlcs` and `pending_outbound_htlcs`
+      - Get the latest fee rate for the channel 
+      - For each pending inbound htlc, based on state `add_htlc_output`:
+        - HTLC is `RemoteAnnounced` so we will add it
+      - For each pending outbound htlc, based on state `add_htlc_output`:
+        - We have none, as we've only got one pending inbound 
+    - Verifies signature on expected commitment transaction
+    - Ensure that our counterparty can afford the new fee/commitment/
+      reserve
+    - Next build all HTLCs and validate their signatures
+    - If we have a pending update fee from the remote party:
+      - Note that they need a new commitment from us
+      - Update the fee update's state to awaiting revocation
+    - For each `pending_inbound_htlcs`:
+      - Update state to `AwaitingRemoteRevokeToAnnounce`
+    - We don't have any pending outgoing HTLCs at this point, so there's
+      no action for `pending_outbound_htlcs`
+  - Create a `ChannelMonitorUpdate` that has the new commitment info
+  - if there is a `monitor_update`, `handle_new_monitor_update`
+
+### Sending Revoke and ACK
+
+What background task triggers a revoke and ack?
+- Probably done in `handle_new_monitor_update`?
+handle_monitor_update_completion calls handle_channel_resumption
 
 ## STFU Implementation in LDK
 
@@ -174,6 +230,10 @@ ChannelMessageHandler:
   messages fn
 - This is called when we receive a stfu messsage in PeerManager
 -> Not yet implemented under the hood
+
+Possible implementation:
+- We can just look at the HTLC state of our incoming and outgoing HTLCs
+  to determine whether we're able to STFU
 
 # To Further Investigate
 
