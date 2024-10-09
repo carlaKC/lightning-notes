@@ -247,6 +247,8 @@ TODO: continue looking at what's persisted (L11894)
     - `handle_monitor_update(self, updates_res, chan, _internal)`:
       - ??
 Resume on 8315
+tl;dr: this macro _does_ call the channel resume thing that has RAA in it
+
 handle_new_monitor_update(
   ident: ChannelManager,
   expr: FundingUTXO,
