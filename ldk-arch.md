@@ -128,6 +128,30 @@ Event Handling Closure:
 
 # Details
 
+## ChannelMonitor
+
+- `ChannelMonitorUpdate` represents an update to a channel
+  - `ChannelMonitorUpdateStep` has the actual update:
+    - `LatestHolderCommitmentTXInfo`: we have received a commitment
+      signed from our counterparty, has all sigs, htlcs, preimages
+      and forwards that we need to remember
+    - `LatestCounterpartyCommitmentTXInfo`: we have sent a commitment
+      signed to our counterparty, has all htlcs, balances and commitment
+      points required.
+    - `PaymentPreimage`: we've received a preimage
+    - `CommitmentSecret`: we've received a secret
+    - `ChannelForceClosed`: terminal signal for channel
+    - `ShutdownScript`: provides address for shutdown
+  - Stores pubkey so that `ChannelMonitor` can look up the channel 
+    easily 
+  - `update_id`: sequence id, must be replayed in order
+- [Possibly wrong thought]: while the channel monitor is mostly 
+  concerned with handling on-chain transactions, its updates actually
+  holding a lot of the information that we'll use in the ChannelManger,
+  that's why we need to pull the `ChannelMonitor` from disk to start
+  up the `ChannelManger`.
+  - As an example,  
+
 ## ChannelManager
 
 - Has some node-level items, like pending payments and receives
@@ -169,7 +193,8 @@ Writable: what does `ChannelManager` actually persist?
     - what's written for HTLCs
 
 TODO: continue looking at what's persisted (L11894)
-    
+
+
 ### Commitment Dance
 
 #### Adding a HTLC
