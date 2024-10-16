@@ -152,6 +152,13 @@ Event Handling Closure:
   up the `ChannelManger`.
   - As an example,  
 
+`ChannelMonitorUpdateStatus`:
+- Used to represent the status of an update to the channel monitor's
+  persistence. 
+- `InProgress` is the interesting state (otherwise done or failed),
+  which is used to freeze the channel (indicating that persistence is
+  happening asynchronously or a retryable error has occurred).
+
 ## ChannelManager
 
 - Has some node-level items, like pending payments and receives
@@ -197,6 +204,8 @@ TODO: continue looking at what's persisted (L11894)
 
 ### Commitment Dance
 
+Full commitment dance for adding a HTLC that's intended to be forwarded.
+
 #### Adding a HTLC
 - Once a channel has been fully opened, it's going to be tracked in
   the `ChannelManger`'s `per_peer_state`:
@@ -215,9 +224,7 @@ TODO: continue looking at what's persisted (L11894)
     `decode_update_add_htlc_onion`
   - Lookup peer and the channel the HTLC is for
   - `construct_pending_htlc_status` creates a `PendingHTLCStatus`:
-    - `create_fwd_pending_htlc_info`: Forward the HTLC
-    - `create_recv_pending_htlc_info`: Receive the payment
-    - Otherwise error accordingly
+    - `PendingHTLCStatus::Forward`
   - Check `can_accept_incoming_htlc` which looks at channel constraints
     (dust, in flight etc)
   - `try_chan_phase_entry` with `update_add_htlc`
@@ -246,6 +253,7 @@ TODO: continue looking at what's persisted (L11894)
         - HTLC is `RemoteAnnounced` so we will add it
       - For each pending outbound htlc, based on state `add_htlc_output`:
         - We have none, as we've only got one pending inbound 
+      - Sets resend_order = CommitmentFirst
     - Verifies signature on expected commitment transaction
     - Ensure that our counterparty can afford the new fee/commitment/
       reserve
@@ -258,50 +266,58 @@ TODO: continue looking at what's persisted (L11894)
     - We don't have any pending outgoing HTLCs at this point, so there's
       no action for `pending_outbound_htlcs`
   - Create a `ChannelMonitorUpdate` that has the new commitment info
+    - `LatestHolderCommitmentTXInfo`: holds sigs and commit info
   - `monitor_updating_paused`:
     - Called when we know that we haven't persisted an update for the
       `ChanelMonitor`
     - There are a bunch of state-machine related varaibles here:
-      - pending_revoke_and_ack / commitment_signed etc
+      - pending_revoke_and_ack = true
+      - pending_commitment_signed = true
+      - resend_channel_ready = false
   - Update is pushed onto the channel's queue:
     - If there are blocked updates, the user can't handle it now
     - If there's nothing queued, then return for the user to persist
     - These are stored in `blocked_monitor_updates` on the channel
-  - `handle_new_monitor_update`
-    - update_channel: notify chain monitor of new updates
-    - `handle_monitor_update(self, updates_res, chan, _internal)`:
-      - ??
-Resume on 8315
-tl;dr: this macro _does_ call the channel resume thing that has RAA in it
-
-handle_new_monitor_update(
-  ident: ChannelManager,
-  expr: FundingUTXO,
-    ChannelMonitorUpdate {
-	  update_id: self.context.latest_monitor_update_id,
-	  counterparty_node_id: Some(self.context.counterparty_node_id),
-	  updates: vec![ChannelMonitorUpdateStep::LatestHolderCommitmentTXInfo {
-	    commitment_tx: holder_commitment_tx,
-	    htlc_outputs: htlcs_and_sigs,
-	    claimed_htlcs,
-	    nondust_htlc_sources,
-	  }],
-	channel_id: Some(self.context.channel_id()),
-  },
-  expr: MonitorUpdate,
-  expr: peer_state_lock,
-  expr: peer_state,
-  expr: per_peer_state, 
-  expr: Channel,
-)
-
-### Handling Update
+  - `handle_monitor_update`
+    - Gets `in_flight_monitor_updates`
+    - Call `chain_monitor.update_channel`
+      - Gets the specific `chain_monitor` and acquires its lock:
+        - `channelmonitor.update_monitor`:
+          - `provide_latest_holder_commitment_tx`:
+            - Reports our latest tx to the `onchain_tx_handler`
+            - Updates its view of the current commitment tx
+            - Adds any `counterparty_fulfilled_htlcs`
+      - Remove updates from `in_flight_updates`
+      - If there are no updates pending on channel monitor:
+        - `monitor_updating_restored` returns updates
+          - `monitor_pending_revoke_and_ack` is true (from 
+            `commitment_signed`), so we get a revoke and ack message
+        - Returns a set of `MonitorRestoreUpdates`
+        - Call `handle_channel_resumption`:
+          - Returns a set of `htlc_forwards` from `pending_forwards`
+          - Returns `decode_update_add_htlcs` from `pending_update_adds`
+          - Pushes the `revoke_and_ack` message to the msg queue
+    - If there are `htlc_forwards` call `forward_htlcs`
+      - `forward_htlcs_without_forward_event`
+      - We don't have any of these yet, because htlc is still pending
+    - If there are `decode_update_add_htlc` `push_decode_update_add_htlcs`
+      - TODO: seems like there aren't any HTLCs
 
 ### Sending Revoke and ACK
 
-What background task triggers a revoke and ack?
-- Probably done in `handle_new_monitor_update`?
-handle_monitor_update_completion calls handle_channel_resumption
+- When the `PeerManager` gets a `revoke_and_ack`, it will call 
+  `handle_revoke_and_ack` on its `ChannelMessageHandler` (which is
+  implemented by `ChannelManager`
+- We `notify_on_drop` the `PersistenceNotifier`, indicating that we
+  must persist once this function is done
+- `internal_revoke_and_ack`:
+  - Looks up peer/channel as above, and asserts that the channel is in
+    the correct state
+  - `try_chan_phase_entry` with `revoke_and_ack` 
+
+  ~~~~ resume ~~~~
+  - if an update is returned ...
+    - resume 8518
 
 ## ChannelMonitor
 
