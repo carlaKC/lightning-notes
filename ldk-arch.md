@@ -314,10 +314,13 @@ Full commitment dance for adding a HTLC that's intended to be forwarded.
   - Looks up peer/channel as above, and asserts that the channel is in
     the correct state
   - `try_chan_phase_entry` with `revoke_and_ack` 
-
-  ~~~~ resume ~~~~
-  - if an update is returned ...
-    - resume 8518
+    - Check that revocation point is as expected for previous commit
+    - Create `ChannelMonitorUpdate` with a `CommitmentSecret` update
+    - Clear state on `Channel`:
+      - `clear_awaiting_revoke` = F
+      - `message_awaiting_resp` = F
+    - Process HTLCs that are impacted by the revoction:
+      - The incoming HTLC is in `AwaitingRemoteRevokeToAnnounce`
 
 ## ChannelMonitor
 
