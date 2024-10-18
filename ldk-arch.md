@@ -206,6 +206,11 @@ TODO: continue looking at what's persisted (L11894)
 
 Full commitment dance for adding a HTLC that's intended to be forwarded.
 
+Starting state for channel:
+- When we receive a `channel_ready` and we've sent our own, we'll
+  progress our `ChannelState` enum on `Channel` to `ChannelReady`
+  - Pull all flags from previous state and set `FundedStateFlags::ALL`
+
 #### Adding a HTLC
 - Once a channel has been fully opened, it's going to be tracked in
   the `ChannelManger`'s `per_peer_state`:
@@ -246,34 +251,38 @@ Full commitment dance for adding a HTLC that's intended to be forwarded.
   - Fetches the channel and asserts that it's reached the funded stage
   - `try_chan_phase_entry` with `commitment_signed`
     - Sanity checks on the channel's state for update
-    - `build_commitment_transaction`:
-      - Gets inbound `pending_inbound_htlcs` and `pending_outbound_htlcs`
-      - Get the latest fee rate for the channel 
+    - `build_commitment_transaction` (generated_by_local = F)
       - For each pending inbound htlc, based on state `add_htlc_output`:
-        - HTLC is `RemoteAnnounced` so we will add it
-      - For each pending outbound htlc, based on state `add_htlc_output`:
-        - We have none, as we've only got one pending inbound 
-      - Sets resend_order = CommitmentFirst
-    - Verifies signature on expected commitment transaction
-    - Ensure that our counterparty can afford the new fee/commitment/
-      reserve
-    - Next build all HTLCs and validate their signatures
-    - If we have a pending update fee from the remote party:
-      - Note that they need a new commitment from us
-      - Update the fee update's state to awaiting revocation
+        - HTLC is `RemoteAnnounced` so we will add it to commitment
     - For each `pending_inbound_htlcs`:
       - Update state to `AwaitingRemoteRevokeToAnnounce`
     - We don't have any pending outgoing HTLCs at this point, so there's
       no action for `pending_outbound_htlcs`
   - Create a `ChannelMonitorUpdate` that has the new commitment info
     - `LatestHolderCommitmentTXInfo`: holds sigs and commit info
-  - `monitor_updating_paused`:
+  - `expecting_peer_commitment_signed` = F 
+  - `resend_order` = `CommitmentFirst
+  - `is_monitor_update_in_progress` = false (don't branch)
+  - `need_commitment` is true (because we have htlcs) and 
+    `is_awaiting_remote_revoke` is false, so we'll call
+    `build_commitment_no_status_check`:
+    - Upgrades HTLCs from `AwaitingRemoteRevokeToAnnounce` to 
+      `AwaitingAnnouncedRemoteRevoke`
+    - `resend_order` = RevokeAndAckFirst
+    - `awaiting_remote_revoke` = T 
+    - Append update to `monitor_update`:
+      - LatestCounterpartyCommitmentTXInfo 
+    - `need_commitment_signed` = T
+    - `awaiting_remote_revoke` = T
+  - `monitor_updating_paused`(true, true, false, {empty vecs}:
     - Called when we know that we haven't persisted an update for the
       `ChanelMonitor`
-    - There are a bunch of state-machine related varaibles here:
-      - pending_revoke_and_ack = true
-      - pending_commitment_signed = true
-      - resend_channel_ready = false
+    - There are a bunch of state-machine related variables here:
+      - `pending_revoke_and_ack` = true
+      - `pending_commitment_signed` = true
+	  - `pending_channel_ready` = false
+      - `pending_forwards/failures/finalized` = empty
+	  - `update_in_progress` = T
   - Update is pushed onto the channel's queue:
     - If there are blocked updates, the user can't handle it now
     - If there's nothing queued, then return for the user to persist
@@ -283,25 +292,29 @@ Full commitment dance for adding a HTLC that's intended to be forwarded.
     - Call `chain_monitor.update_channel`
       - Gets the specific `chain_monitor` and acquires its lock:
         - `channelmonitor.update_monitor`:
-          - `provide_latest_holder_commitment_tx`:
-            - Reports our latest tx to the `onchain_tx_handler`
-            - Updates its view of the current commitment tx
-            - Adds any `counterparty_fulfilled_htlcs`
-      - Remove updates from `in_flight_updates`
+          - For each update in the queue:
+            - `LatesttHolderCommitmentTxInfo`
+              - `provide_latest_holder_commitment_tx`:
+              - Reports our latest tx to the `onchain_tx_handler`
+              - Updates its view of the current commitment tx
+            - `LatestCounterpartyCommitmentTXInfo`
+              - `provide_latest_counterparty_commitment_tx`
+              - Likewise notifies the chain monitor of new tx
       - If there are no updates pending on channel monitor:
-        - `monitor_updating_restored` returns updates
-          - `monitor_pending_revoke_and_ack` is true (from 
-            `commitment_signed`), so we get a revoke and ack message
-        - Returns a set of `MonitorRestoreUpdates`
-        - Call `handle_channel_resumption`:
-          - Returns a set of `htlc_forwards` from `pending_forwards`
-          - Returns `decode_update_add_htlcs` from `pending_update_adds`
-          - Pushes the `revoke_and_ack` message to the msg queue
-    - If there are `htlc_forwards` call `forward_htlcs`
-      - `forward_htlcs_without_forward_event`
-      - We don't have any of these yet, because htlc is still pending
-    - If there are `decode_update_add_htlc` `push_decode_update_add_htlcs`
-      - TODO: seems like there aren't any HTLCs
+        - `monitor_updating_restored` returns updates:
+          - `pending_revoke_and_ack` = T; create `revoke_and_ack`
+            - `signer_pending_revoke_and_ack=false`
+          - Update state machine:
+          - `pending_revoke_and_ack` = F
+          - `pending_commitment_signed` = F
+          - Returns a set of `MonitorRestoreUpdates` with a `RAA` and
+            `CommitmentSigned` it does not have any HLTCs on it because 
+            the monitor's various `pending_forwards/failures/updates_adds`
+            are not yet set
+      - Call `handle_channel_resumption`:
+        - Push `SendRevokeAndAck` message
+        - Push `SendCommitmentSigned`
+        - There aren't any HTLCs to handle at this stage
 
 ### Sending Revoke and ACK
 
@@ -317,10 +330,21 @@ Full commitment dance for adding a HTLC that's intended to be forwarded.
     - Check that revocation point is as expected for previous commit
     - Create `ChannelMonitorUpdate` with a `CommitmentSecret` update
     - Clear state on `Channel`:
-      - `clear_awaiting_revoke` = F
+      - `awaiting_remote_revoke` = F
       - `message_awaiting_resp` = F
     - Process HTLCs that are impacted by the revoction:
-      - The incoming HTLC is in `AwaitingRemoteRevokeToAnnounce`
+      - The incoming HTLC is in `AwaitingRemoteRevokeToAnnounce`:
+        - Promote to `AwaitingAnnouncedRemoteRevoke`
+      - We do not yet push the htlc to `monitor_pending_adds`, we're
+        not irrevocably committed yet
+
+    Where is thi?
+    - require_commitment = T, because we set it with our pending htlc
+      processing:
+      - `build_commitment_no_status_check`:
+        - resend_order = RevokeAndACKFirst
+      - ChannelMonitorUpdateStep::LatestCounterpartyCommitmentTXInfo 
+      - set_awaiting_remote_revoke = T
 
 ## Channel
 
