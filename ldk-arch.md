@@ -322,6 +322,28 @@ Full commitment dance for adding a HTLC that's intended to be forwarded.
     - Process HTLCs that are impacted by the revoction:
       - The incoming HTLC is in `AwaitingRemoteRevokeToAnnounce`
 
+## Channel
+
+- `define_state_flags!` macro (using `ChannelReady` example):
+  - Document for the flag 
+  - FUNDED_STATE adds extra flage to our definition
+  - Name of the flag being implemented (eg `ChannelReadyFlags`)
+  - List of flags that we're adding:
+    - Doc string for the flag
+    - The name of the flag
+    - The bit value of the flag that we set
+    - Name of the getter function to generate
+    - Name of the setter function to generate
+    - Name of the function to clear the flag
+
+- `impl_state_flag!` macro:
+  - Implements methods on `ChannelState` that provide getter/setter/clear
+    for a given ChannelState
+  - Matches current state to the expected state, then calls the method
+    on the flags
+  - Each variant of the `ChannelState` enum holds its own set of flags
+    that are defined by the `define_state_flags` macro
+
 ## ChannelMonitor
 
 - Responsible for the on-chain actions related to a channel
