@@ -169,6 +169,30 @@ Event Handling Closure:
     the full channel state if the channel has been fully funded
   - Messages to send to the peer 
 
+Node Payments:
+- `pending_inbound_payments`: stores preimages + secrets for our payments
+  that we're waiting to report to the user as `PaymentClaimable`
+- `pending_outbout_payments`: session information and state that we
+  need for our own payments
+- `claimable_payments`: payments that can currently be claimed
+
+Node HTLCs:
+- `forward_htlcs`: HTLCs that need to be forwarded  
+  - SCID = 0 means that we've received a payment
+- `pending_intercepted_htlcs`: holds intercepted HTLCs that are waiting
+  from an action from the user
+- `decode_update_add_htlcs`: what's the difference here 
+
+Node
+- `per_peer_state`:
+  - `channel_by_id`
+    - `ChannelPhase`:
+      - Enum for each possible channel state
+      - `Funded(Channel)` for confirmed channels:
+        - `ChannelContext` holds channel's state
+  - `pending_msg_events`: messages that must be sent to the peer
+- `pending_events`: events that need to be handed to the user
+
 Restarts:
 - To reload from disk, the `ChannelManager` requires all of the
   deserialized `ChanelMonitor`s that we stored
