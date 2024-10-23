@@ -223,10 +223,38 @@ Writable: what does `ChannelManager` actually persist?
   - Hash / payment HTLCs:
     - what's written for HTLCs
 
-TODO: continue looking at what's persisted (L11894)
+## Channel
 
+- `define_state_flags!` macro (using `ChannelReady` example):
+  - Document for the flag 
+  - FUNDED_STATE adds extra flage to our definition
+  - Name of the flag being implemented (eg `ChannelReadyFlags`)
+  - List of flags that we're adding:
+    - Doc string for the flag
+    - The name of the flag
+    - The bit value of the flag that we set
+    - Name of the getter function to generate
+    - Name of the setter function to generate
+    - Name of the function to clear the flag
 
-### Commitment Dance
+- `impl_state_flag!` macro:
+  - Implements methods on `ChannelState` that provide getter/setter/clear
+    for a given ChannelState
+  - Matches current state to the expected state, then calls the method
+    on the flags
+  - Each variant of the `ChannelState` enum holds its own set of flags
+    that are defined by the `define_state_flags` macro
+
+## ChannelMonitor
+
+- Responsible for the on-chain actions related to a channel
+- We get a channel monitor back in the funding dance when we need to 
+  start watching the chain (ie, we've signed)
+- We call `ChainMonitor.watch_channel` to report the channel's existence
+- Channel mointors are given to the `ChannelManger` via 
+  `ChannelManagerReadArgs`: things that we don't
+
+## Commitment Dance
 
 Full commitment dance for adding a HTLC that's intended to be forwarded.
 
@@ -384,37 +412,6 @@ Starting state for channel:
       - `handle_monitor_update_completion_actions`: TODO!
       - if `htlc_forwards` ->`forward_htlcs`
         - Pushes HTLC to the forward_htlcs mutex map
-
-## Channel
-
-- `define_state_flags!` macro (using `ChannelReady` example):
-  - Document for the flag 
-  - FUNDED_STATE adds extra flage to our definition
-  - Name of the flag being implemented (eg `ChannelReadyFlags`)
-  - List of flags that we're adding:
-    - Doc string for the flag
-    - The name of the flag
-    - The bit value of the flag that we set
-    - Name of the getter function to generate
-    - Name of the setter function to generate
-    - Name of the function to clear the flag
-
-- `impl_state_flag!` macro:
-  - Implements methods on `ChannelState` that provide getter/setter/clear
-    for a given ChannelState
-  - Matches current state to the expected state, then calls the method
-    on the flags
-  - Each variant of the `ChannelState` enum holds its own set of flags
-    that are defined by the `define_state_flags` macro
-
-## ChannelMonitor
-
-- Responsible for the on-chain actions related to a channel
-- We get a channel monitor back in the funding dance when we need to 
-  start watching the chain (ie, we've signed)
-- We call `ChainMonitor.watch_channel` to report the channel's existence
-- Channel mointors are given to the `ChannelManger` via 
-  `ChannelManagerReadArgs`: things that we don't
 
 ## STFU Implementation in LDK
 
