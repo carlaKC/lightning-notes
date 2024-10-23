@@ -359,7 +359,7 @@ Starting state for channel:
         - No messages/events need handling
       - `handle_monitor_update_completion_actions`: TODO!
       - if `htlc_forwards` ->`forward_htlcs`
-        - Pushes HTLC to the forward_htlcs mutex map  
+        - Pushes HTLC to the forward_htlcs mutex map
 
 ## Channel
 
