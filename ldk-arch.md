@@ -191,6 +191,10 @@ Node
       - `Funded(Channel)` for confirmed channels:
         - `ChannelContext` holds channel's state
   - `pending_msg_events`: messages that must be sent to the peer
+  - `in_flight_monitor_updates`: `CHannelMointorUpdate` that have been passed
+    to the user but not yet completed.
+  - `monitor_update_blocked_actions` : actions that should be taken once all
+    pending actions have completed
 - `pending_events`: events that need to be handed to the user
 
 Restarts:
@@ -223,7 +227,27 @@ Writable: what does `ChannelManager` actually persist?
   - Hash / payment HTLCs:
     - what's written for HTLCs
 
-## Channel
+## Channel (wraps ChannelContext)
+
+- Tracks the full state of an individual channel
+- `latest_mointor_update_id`
+
+HTLCs:
+- `pending_inbound_htlcs`: holds HTLCs until they are irrevocably committed on 
+  the incoming link
+- `pending_outbound_htlcs`: holds HTLCs until *TODO: finish with outbound commitment dance*
+- `holding_cell_htlc_updates`: *TODO*
+
+State:
+- `resend_order`: so that we send messages in the correct order on reconnect
+What do all of these do?
+- `monitor_pending_revoke_and_ack`
+- `monitor_pending_commitment_signed`
+- `mointor_pending_forwards`
+- `monitor_pending_failures`
+- `monitor_pending_finalized_fulfills`
+- `monitor_pending_update_adds`
+- `blocked_monitor_updates`
 
 - `define_state_flags!` macro (using `ChannelReady` example):
   - Document for the flag 
@@ -245,14 +269,29 @@ Writable: what does `ChannelManager` actually persist?
   - Each variant of the `ChannelState` enum holds its own set of flags
     that are defined by the `define_state_flags` macro
 
-## ChannelMonitor
+## ChainMonitor
 
-- Responsible for the on-chain actions related to a channel
-- We get a channel monitor back in the funding dance when we need to 
-  start watching the chain (ie, we've signed)
-- We call `ChainMonitor.watch_channel` to report the channel's existence
-- Channel mointors are given to the `ChannelManger` via 
-  `ChannelManagerReadArgs`: things that we don't
+- The `ChannelManager` has a single `chain_monitor` which is in charge
+  of all chain actions. It implements the `Watch` trait which allows
+  callers to:
+  - Add a new channel that has just been funded
+  - Provide updates to the channel, based on state updates
+  - `release_pending_monitor_events` which pulls the events from its
+    underlying per-channel monitors.
+- It has traits for chain source, broadcasting and tracks our height
+- `monitors`: maps outpoint to `MonitorHolder` which contains:
+  - `ChannelMonitor`
+    - `ChannelMonitorImpl`:
+      - Holds information about the channel for on-chain claims
+      - Various functions surfaced here for reporting chain-relevant
+        events: 
+        - Block confirmed (checks if we have to force-close)
+        - Store preimage for a payment (so we can claim on-chain) 
+  - pending_monitor_updates`
+
+LND-sp33k: this is essentially the channel-arbitrator, which receives
+information about the channel's state and the blockchain and is 
+responsible for taking appropriate actions. 
 
 ## Commitment Dance
 
