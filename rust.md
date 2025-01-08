@@ -30,3 +30,31 @@ Options for defining errors are:
 [Reddit thread on libraries specifically](https://www.reddit.com/r/rust/comments/9x17hn/comment/e9p5c9t/?utm_source=share&utm_medium=web3x&utm_name=web3xcss&utm_term=1&utm_content=share_button})
 - Panic if your library has a bug
 - Panic if your library's precondition is not met (they have a bug)
+
+# References when `Copy` is implemented
+
+I have a ~50 byte struct, and was wondering when it's better to pass
+it by reference vs just allowing it to be copied.
+
+Re-read rust book ch04 (specifically [borrowing](https://doc.rust-lang.org/book/ch04-02-references-and-borrowing.html)).
+- Seems like the [general rule](https://users.rust-lang.org/t/what-is-faster-copy-or-passing-reference/80733/3)
+  is that structs that will fit in a register (<64 bytes) are faster
+  to copy because CPUs are optimized for register access nowadays,
+  but generally you have to benchmark to understand in the context of
+  your code.
+- Adding a reference can [complicate](https://www.reddit.com/r/rust/comments/zzxz2e/comment/j2f551r/?utm_source=share&utm_medium=web3x&utm_name=web3xcss&utm_term=1&utm_content=share_button)
+  underlying in CPU; even if you only end up passing an 8 byte reference
+  you end up doing more juggling under the hood to create that reference
+  when you could have just accessed a few registers that the struct was
+  stored in
+- When you pass by value, the compiler may [optimize](https://www.reddit.com/r/rust/comments/r8vxkv/comment/hn89fsn/?utm_source=share&utm_medium=web3x&utm_name=web3xcss&utm_term=1&utm_content=share_button)
+  to pass by reference under the hood anyway
+- Nice [summary here](https://www.reddit.com/r/rust/comments/r8vxkv/comment/hn8qux0/?utm_source=share&utm_medium=web3x&utm_name=web3xcss&utm_term=1&utm_content=share_button).
+
+tl;dr: 
+- pass by value for small structs
+- confirm compiler optimization for large structs by value if I run
+  into it (if yes, then always pass by value)
+
+[Warp speed rust](http://troubles.md/rust-optimization/) looks like a
+nice read if I get the time.
