@@ -58,3 +58,29 @@ tl;dr:
 
 [Warp speed rust](http://troubles.md/rust-optimization/) looks like a
 nice read if I get the time.
+
+# Generics vs Dyn
+
+Per [the book](https://www.lurklurk.org/effective-rust/generics.html#basic-comparisons):
+* `dyn` requires 2x dereferences (fat pointer to vtable + value itself)
+* Generics are slower to compile, _slightly_ faster to run
+  * Don't optimize on this unless you've actually benchmarked a 
+    difference
+* Generics are helpful for conditionally implementing features based
+  on the traits that something implements:
+  * ie, you can implement with bound `A + B` to only surface that
+    functionality if both traits are available
+* Trait objects (`dyn`) also must adhere to object safety:
+  * No generics: generics are technically infinite impls, can't fit in
+    a vtable
+  * No `self`: the size of self is not known, can't assign stack space
+    * Exception if it is sized
+
+tl;dr: trait objects give you type erasure, which allows you to use a
+heterogeneous set of implementations of a trait that _only_ need the
+trait methods - eg you have trait X and you want to use A, B, and C that
+all implement X just as an "erased" implementation of X.
+
+Key question: do I need to call this with different types?
+- Yes: trait object
+- No: generics
