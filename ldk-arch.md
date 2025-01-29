@@ -224,7 +224,9 @@ Starting state for channel:
     then we notify that persistence is required
   - SkipPersistHandleEvents:
   - SkipPersistNoEvents:
-- `internal_update_add_htlc`:
+- `ChannelManager`/`internal_update_add_htlc`:
+- `Channel` / channel.update_add_hltc
+  - Performs various state/value sanity checks
   - Decode htlc and check that we can forward it 
     `decode_update_add_htlc_onion`
   - Lookup peer and the channel the HTLC is for
@@ -246,43 +248,48 @@ Starting state for channel:
 - We `notify_on_drop` the `PersistenceNotifier`, indicating that we 
   must persist once this function is done
 - `internal_commitment_signed`:
-  - `local` = true (determines direction of HTLCs for tx)
-  - `generated_by_local` = false (only add proposed htlcs)
   - Fetches the channel and asserts that it's reached the funded stage
-  - `try_chan_phase_entry` with `commitment_signed`
-    - Sanity checks on the channel's state for update
-    - `build_commitment_transaction` (generated_by_local = F)
-      - For each pending inbound htlc, based on state `add_htlc_output`:
-        - HTLC is `RemoteAnnounced` so we will add it to commitment
+  - `try_channel_entry` with `commitment_signed`
+    - Sanity checks on the channel's state that an update is possible
+    - `build_commitment_transaction`:
+      - `local=true`
+      - `generated_by_local=false`
+      - HTLC is in `pending_inbound_htlcs` with state `RemoteAnnounced`
+        so we'll call `add_htlc_output`:
+        - `outbound=false`
+        - Added to `included_non_dust_htlcs`: 
+        - Included in the commitment transaction
+    - Validates all expected signatures
+    - Creates a `HolderCommitmentTransaction` with sigs + commit
     - For each `pending_inbound_htlcs`:
       - Update state to `AwaitingRemoteRevokeToAnnounce`
+      - `need_commitment = T`
     - We don't have any pending outgoing HTLCs at this point, so there's
       no action for `pending_outbound_htlcs`
   - Create a `ChannelMonitorUpdate` that has the new commitment info
     - `LatestHolderCommitmentTXInfo`: holds sigs and commit info
-  - `expecting_peer_commitment_signed` = F 
-  - `resend_order` = `CommitmentFirst
-  - `is_monitor_update_in_progress` = false (don't branch)
-  - `need_commitment` is true (because we have htlcs) and 
-    `is_awaiting_remote_revoke` is false, so we'll call
-    `build_commitment_no_status_check`:
-    - Upgrades HTLCs from `AwaitingRemoteRevokeToAnnounce` to 
-      `AwaitingAnnouncedRemoteRevoke`
-    - `resend_order` = RevokeAndAckFirst
-    - `awaiting_remote_revoke` = T 
-    - Append update to `monitor_update`:
-      - LatestCounterpartyCommitmentTXInfo 
-    - `need_commitment_signed` = T
-    - `awaiting_remote_revoke` = T
+  - Updates to `self.context`:
+    - `expecting_peer_commitment_signed` = F 
+    - `resend_order` = `CommitmentFirst
+    - `is_monitor_update_in_progress` = false (don't branch)
+  - Assuming that `!is_monitor_update_in_progress`
+  - `need_commitment` && `!is_awaiting_remote_revoke`:
+    - `build_commitment_no_status_check`:
+      - Upgrades HTLCs from `AwaitingRemoteRevokeToAnnounce` to 
+        `AwaitingAnnouncedRemoteRevoke`
+      - `self.resend_order` = RevokeAndAckFirst
+      - `self.awaiting_remote_revoke` = T 
+    - Returns a `LatestCounterpartyCommitmentTXInfo`
+  - Append update to `monitor_update`
   - `monitor_updating_paused`(true, true, false, {empty vecs}:
     - Called when we know that we haven't persisted an update for the
       `ChanelMonitor`
     - There are a bunch of state-machine related variables here:
-      - `pending_revoke_and_ack` = true
-      - `pending_commitment_signed` = true
-	  - `pending_channel_ready` = false
-      - `pending_forwards/failures/finalized` = empty
-	  - `update_in_progress` = T
+      - `self.pending_revoke_and_ack` = true
+      - `self.pending_commitment_signed` = true
+	  - `self.pending_channel_ready` = false
+      - `self.pending_forwards/failures/finalized` = empty
+	  - `self.update_in_progress` = T
   - Update is pushed onto the channel's queue:
     - If there are blocked updates, the user can't handle it now
     - If there's nothing queued, then return for the user to persist
@@ -308,7 +315,7 @@ Starting state for channel:
           - `pending_revoke_and_ack` = F
           - `pending_commitment_signed` = F
           - Returns a set of `MonitorRestoreUpdates` with a `RAA` and
-            `CommitmentSigned` it does not have any HLTCs on it because 
+            `CommitmentSigned` it does not have any HTLCs on it because 
             the monitor's various `pending_forwards/failures/updates_adds`
             are not yet set
       - Call `handle_channel_resumption`:
@@ -335,12 +342,12 @@ Starting state for channel:
     - Process HTLCs that are impacted by the revocation:
       - The incoming HTLC is in `AwaitingAnnouncedRemoteRevoke`:
         - Promote to `Committed`
-        - Add it to to_forward_infos
+        - HTLC added to `monitor_pending_update_adds`
     - Assuming `mointor_update_in_progress` is false and
       `free_holding_cell_htlcs` are empty:
       - `monitor_updaing_paused`:
         - Pushes HTLC to `monitor_pending_forwards`
-        - `mointor_udpate_in_progress` = T
+        - `mointor_update_in_progress` = T
         - `pending_revoke_and_ack` = F (unchanged)
         - `pending_commitment_signed` = F (unchanged)
       - `return_with_htlcs_to_fail`:
@@ -351,15 +358,14 @@ Starting state for channel:
       - `chain_monitor.update_channel`:
         - `update_monitor`:
           - `provide_secret`
-      - updates = `monitor_updating_restored`
-        - There are no pending commitment/raa in the mointor
-        - returns `accepted_htlcs` including our forward 
-      - `htlc_forwards, decode_update_adds` =`handle_channel_resumption`
-        - Returns HTLC in `htlc_forwards`
-        - No messages/events need handling
+      - updates = `monitor_updating_restored`:
+        - There are no pending commitment/raa in the monitor
+        - HTLC is included in `accepted_updates` in 
+          `MonitorRestoreUpdates`
+      - `handle_channel_resumption`:
+        - `pending_forwards` contains our htlc, returned as `htlc_forwards`
       - `handle_monitor_update_completion_actions`: TODO!
-      - if `htlc_forwards` ->`forward_htlcs`
-        - Pushes HTLC to the forward_htlcs mutex map  
+      - `self.forward_htlcs(forwards)`
 
 ## Channel
 
