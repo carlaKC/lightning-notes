@@ -162,3 +162,13 @@ Starting state for channel:
         - `pending_forwards` contains our htlc, returned as `htlc_forwards`
       - `handle_monitor_update_completion_actions`: TODO!
       - `self.forward_htlcs(forwards)`
+
+## Forwarding a HTLC
+
+- Once the `ChannelManager` has locked in the incoming htlc, it'll call
+  `self.forward_htlcs(htlc)` with the incoming htlc.
+  - `push_forward_event` = forward_htlcs_without_forward_event
+    - HTLC is not yet in `self.forward_htlcs`
+    ^=== need to check this next
+
+- if `push_forward_event`: `push_pending_forwards_ev` 
