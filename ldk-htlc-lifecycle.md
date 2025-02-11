@@ -156,11 +156,13 @@ Starting state for channel:
           - `provide_secret`
       - updates = `monitor_updating_restored`:
         - There are no pending commitment/raa in the monitor
-        - HTLC is included in `accepted_updates` in 
+        - HTLC is included in `updates.accepted_htlcs` in 
           `MonitorRestoreUpdates`
       - `handle_channel_resumption`:
-        - `pending_forwards` contains our htlc, returned as `htlc_forwards`
-      - `handle_monitor_update_completion_actions`: TODO!
+        - `pending_forwards` contains our htlc, returned as `htlc_forwards`,
+          which is a vec of `PendingHtlcInfo` and some channel info
+      - `handle_monitor_update_completion_actions`:
+        - TODO: we handle the `update_actions` here
       - `self.forward_htlcs(forwards)`
 
 ## Forwarding a HTLC
@@ -168,7 +170,15 @@ Starting state for channel:
 - Once the `ChannelManager` has locked in the incoming htlc, it'll call
   `self.forward_htlcs(htlc)` with the incoming htlc.
   - `push_forward_event` = forward_htlcs_without_forward_event
-    - HTLC is not yet in `self.forward_htlcs`
-    ^=== need to check this next
-
+    - push_forward_event = false
+    - HTLC is passed in pending_forwards
+    - For each pending_forwards (draining vec):
+      - SCID is non-zero because it's a forward 
+      - It's not yet in `self.forward_htlcs` because we haven't pushed
+        it yet
+      - We lookup the outgoing channel id in the map
+      Q: Is the channel in the map??
+      - Push `HTLCForwardInfo::AddHTLC(PendingAddHTLCInfo)` to 
+        the `self.forward_htlcs` map
+      - 
 - if `push_forward_event`: `push_pending_forwards_ev` 
