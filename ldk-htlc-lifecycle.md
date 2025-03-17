@@ -169,16 +169,34 @@ Starting state for channel:
 
 - Once the `ChannelManager` has locked in the incoming htlc, it'll call
   `self.forward_htlcs(htlc)` with the incoming htlc.
-  - `push_forward_event` = forward_htlcs_without_forward_event
+  - `push_forward_event` = `forward_htlcs_without_forward_event`
     - push_forward_event = false
     - HTLC is passed in pending_forwards
     - For each pending_forwards (draining vec):
       - SCID is non-zero because it's a forward 
       - It's not yet in `self.forward_htlcs` because we haven't pushed
         it yet
-      - We lookup the outgoing channel id in the map
-      Q: Is the channel in the map??
-      - Push `HTLCForwardInfo::AddHTLC(PendingAddHTLCInfo)` to 
-        the `self.forward_htlcs` map
-      - 
-- if `push_forward_event`: `push_pending_forwards_ev` 
+      - Our SCID is not yet in `forward_htlcs`
+        - Push `HTLCForwardInfo::AddHTLC(PendingAddHTLCInfo)` to 
+          the `self.forward_htlcs` map
+      - `push_forward_event` = F because the map was previously
+        empty but we don't have any `decode_update_add_htlcs`
+
+TODO: how do we end up calling this if we don't push an event?
+
+If this were an intercept then we'd push an event for it?
+We only add to our forward_htlcs map when:
+- `process_pending_forwards`
+  - `process_pending_update_add_htlcs`
+    - `decode_update_add_htlcs` 
+      - This seems to be what I'm missing?
+      - decode incoming onion
+- We get all `forward_htlcs` 
+
+Side quest:
+- Why don't I have any decode update_add_htlcs?
+
+`push_decode_update_add_htlcs`
+- Called in handle_mointor_update_completion! fuckin macros
+-> Need to go back to revoke and ack step and make sure state is correct
+-> Generally, need to understand the monitor stuff
