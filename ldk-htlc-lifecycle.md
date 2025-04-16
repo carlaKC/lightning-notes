@@ -422,3 +422,140 @@ Outgoing Channel Context:
   holding_cell_updates: []
 
 ```
+
+- `handle_revoke_and_ack`:
+  - `internal_revoke_and_ack`:
+    - Lookup channel in `peer_state.channel_id_by_entry`
+    - `chan.revoke_and_ack`:
+      - Validates the revocation message received
+      - `ChannelMonitorUpdate` / `CommitmentSecret`
+      - `is_awaiting_remote_revoke` = `F`
+      - For each `pending_outbound_htlc`:
+        - Upgrade `LocalAnnounced` to `OutboundHTLCState::Committed`A
+        - `expecting_peer_commitment_signed` = `T`
+      - Assuming no `blocked_monitor_updates`
+      - `maybe_free_holding_cell_htlcs` 
+        - `free_holding_cell_htlcs`:
+          - We don't have any HTLCs in our holding cells, so we return
+            `None, []`
+      - `require_commitment` is false
+        - `monitor_updaing_paused(F,F,F, [], [], [])`
+          - No changes to outgoing channel state since false & empty 
+```
+Outgoing Channel Context:
+  resend_order: RAACommitmentOrder::RevokeAndAckFirst,
+  monitor_pending_channel_ready: false,
+  monitor_pending_revoke_and_ack: false,
+  monitor_pending_commitment_signed: false,
+  monitor_pending_forwards: [],
+  monitor_pending_failures: [],
+  monitor_pending_finalized_fulfills: [],
+  monitor_pending_update_adds: [],
+  is_awaiting_remote_revoke = false,
+  pending_outbound_htlcs: OutboundHTLCOutput{ OutboundHTLCState::LocalAnnounced }
+  holding_cell_updates: []
+
+```
+  - `handle_new_monitor_update` with `CommitmentSecret`
+    - `update_channel`
+      - `update_monitor`
+        - `provide_secret`
+    - Assuming `ChannelMonitorUpdateStatus::Completed`:
+      - `updates` = `monitor_updating_restored`
+        - `pending_revoke_and_ack` = `F`
+        - `pending_commitment_signed` = `F`
+        - Both `raa` and `commitment_update` are None, we don't owe
+        - There also aren't any HTLCs we need to deal with
+    - `handle_channel_resumption`: no actions
+    - `handle_monitor_update_completion_actions`: no actions
+    - `self.forward_htlcs(forwards)`: no actions
+
+## Receiving Commitment Signed
+
+We expect to receive a new commitment from our remote peer that adds
+the HTLC to our commitment.
+
+```
+Outgoing Channel Context:
+  resend_order: RAACommitmentOrder::RevokeAndAckFirst,
+  monitor_pending_channel_ready: false,
+  monitor_pending_revoke_and_ack: false,
+  monitor_pending_commitment_signed: false,
+  monitor_pending_forwards: [],
+  monitor_pending_failures: [],
+  monitor_pending_finalized_fulfills: [],
+  monitor_pending_update_adds: [],
+  is_awaiting_remote_revoke = false,
+  pending_outbound_htlcs: OutboundHTLCOutput{ OutboundHTLCState::LocalAnnounced }
+  holding_cell_updates: []
+
+```
+
+- `handle_commitment_signed`
+  - `internal_commitment_signed`:
+    - `chan.commitment_signed`
+      - `funded_channel.commitment_signed`A
+        - `validate_commitment_signed` 
+          - `build_commitment_transaction` (`local=T`, `generated_by_local=F`)
+            - Our HTLC is in `pending_outbound_htlcs` so it is included
+            - Validate that the commitment and htlc sigs are ok
+            - Returns `Ok(LatestHolderCommitmentTXInfo)`
+        - `commitment_signed_update_monitor`
+          - Our HTLC has not been settled/failed, so we don't change state
+          - `need_commitment` = `F` (not set by any htlcs /fee updates)
+          - `monitor_updating_paused(T, F, F, [], [], [])`
+
+```
+Outgoing Channel Context:
+  resend_order: RAACommitmentOrder::CommitmentFirst,
+  monitor_pending_channel_ready: false,
+  monitor_pending_revoke_and_ack: true,
+  monitor_pending_commitment_signed: false,
+  monitor_pending_forwards: [],
+  monitor_pending_failures: [],
+  monitor_pending_finalized_fulfills: [],
+  monitor_pending_update_adds: [],
+  is_awaiting_remote_revoke = false,
+  pending_outbound_htlcs: OutboundHTLCOutput{ OutboundHTLCState::LocalAnnounced }
+  holding_cell_updates: []
+```
+   - `handle_new_monitor_update`
+     - `update_channel`
+       - `update_monitor`
+         - `provide_latest_holder_commitment_tx`
+           - Bumps our view of our current commitment transaction
+    - Assuming `ChannelMonitorUpdateStatus::Completed`:
+      - `updates` = `monitor_updating_restored`
+        - No HTLCs that need handling
+        - `monitor_pending_revoke_and_ack` = `T`
+          - `get_last_revoke_and_ack`
+        - `monitor_pending_commitment_signed` = `F`
+        - `resend_order` = `CommitmentFirst` but `pending_commitment_update` = `F`
+          so we don't wipe our our RAA
+        - `pending_revoke_and_ack` = `F`
+        - `pending_commitment_update` = `F`
+     - `handle_channel_resumption`
+       - Push `MessageSendEvent::SendRevokeAndAck`
+     - There are no HTLC actions to take
+
+```
+Outgoing Channel Context:
+  resend_order: RAACommitmentOrder::CommitmentFirst,
+  monitor_pending_channel_ready: false,
+  monitor_pending_revoke_and_ack: false,
+  monitor_pending_commitment_signed: false,
+  monitor_pending_forwards: [],
+  monitor_pending_failures: [],
+  monitor_pending_finalized_fulfills: [],
+  monitor_pending_update_adds: [],
+  is_awaiting_remote_revoke = false,
+  pending_outbound_htlcs: OutboundHTLCOutput{ OutboundHTLCState::LocalAnnounced }
+  holding_cell_updates: []
+```
+
+The HTLC is irrevocably committed on the outgoing channel!
+
+## Update Fulfill HTLC
+
+Once we're committed the HTLC, the downstream peer will send an
+`update_fulfill_htlc` to settle the HTLC back.
