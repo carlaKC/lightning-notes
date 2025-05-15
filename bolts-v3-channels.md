@@ -7,6 +7,45 @@ need:
 - [to deploy] V3 standard on the network (should happen soon)
 - [optionally] A method to upgrade channels on the fly
 
+## Implementation checklist
+
+[ ] Support a `zero_fee_commitments` feature bit (40/41)
+[ ] Allow channel type using even feature (40)
+[ ] `open_channel`:
+    [ ] Sender: MUST set `feerate_per_kw` to zero
+    [ ] Receiver: MUST fail if `max_accepted_htlcs` > 114
+    [ ] Receiver: MUST fail if `feerate_per_kw` != 0
+[ ] `open_channel_v2` if `channel_type` includes `zero_fee_commitments`:
+    [ ] Sender: MUST set `commitment_feerate_per_kw` to 0
+    [ ] Receiver: MUST fail if `commitment_feerate_per_kw` =! 0
+[ ] `funding_signed`: if not channel type was negotiated assume it to
+    be `zero_fee_commitments` if it was negotiated
+[ ] Fee paying node for `zero_fee_commitment` channels:
+    [ ] Does not need to maintain a fee spike buffer
+    [ ] Does not need to account for fees for offered htlcs
+    [ ] Does not need to be able to pay for local anchor?
+[ ] Non-fee paying node for `zero_fee_commitments`:
+    [ ] Does not need to worry about remote node needing to pay fees
+[ ] `update_fee`:
+    [ ] Sender: MUST NOT send `update_fee`
+[ ] Commitment transaction:
+    [ ] Set version to 3
+    [ ] Usually a zero fee P2A output
+    [ ] Can add dust up to 240 sats
+    [ ] If `to_local` of tx owner < holder's `dust_limit_satoshis` MUST add to `shared_anchor`
+    [ ] If `to_remote` of tx owner < holder's `dust_limit_satoshis` MUST add to `shared_anchor`
+    [ ] Trimmed offered and received HTLCs go to `shared_anchor`
+    [ ] Fee must be zero
+    [ ] Add shared anchor last, then BIP 69 sort
+[ ] Timeout/Success txns:
+    [ ] Use `SINGLE|ACP` sighash
+    [ ] Set `sequence` = 0 for `txin[0]`
+    [ ] Fee must be zero
+[ ] Commitment must be paid for using CPFP (and must submitpackage)
+[ ] MUST spend `shared_anchor` on broadcast to incentivise mining
+
+Q: Why isn't there a similar requirement on the receiver
+
 ## Transaction Format
 
 [Lightning Transactions with V3](https://delvingbitcoin.org/t/lightning-transactions-with-v3-and-ephemeral-anchors/418)
@@ -78,6 +117,3 @@ M --(expiry T+10) --> A --(expiry T+5)--> M
 
 Making HTLCs V3 is challenging because we need to update our commitment
 dance - you don't know beforehand what you should be signing?
-
-## Pinning Discussion
-
