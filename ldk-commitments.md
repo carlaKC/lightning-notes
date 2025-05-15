@@ -205,8 +205,6 @@ when pending messages are cleared out and B will receive a
 
 ## B receives funding_crated from A
 
-TODO: start from the top here!
-
 The message will be handled by `handle_funding_created`:
 - `internal_funding_created`:
   - Lookup and remove the temporary channel in `peer_state.channel_by_id`:
@@ -215,8 +213,26 @@ The message will be handled by `handle_funding_created`:
       - `initial_commitment_signed`:
         - Checks that the counterparty's commitment is valid
         - `build_commitment_transaction`:
+          - `build_commitment_stats`:
+            - Calculates balances on either side and fees
+            - Sets `total_anchors_sat` to 2x value
           - Collects outputs and HTLCs for the commitment
-          - Does not include any anchors
+          - Subtracts anchors from appropriate balance
+          - `CommitmentTransaction::new()`:
+            - `build_outputs_and_htlcs`:
+              - `build_sorted_htlc_outputs`:
+                - `build_htlc_outputs` creates a vec of HTLCs
+                - `build_sorted_htlc_outputs`: sorts them
+              - Set the output index of each of the HTLCs
+              - `insert_non_htlc_outputs` 
+                - Calls provided closure for each output, creating
+                  anchors and channel balances
+                - Inserted in the correct order using the sort
+            - `build_inputs` adds inputs to tx
+            - `make_transaction`:
+              - Sets version, locktime, inputs, outputs
+            - Returns `CommitmentTransaction`
+          - Returns `CommitmentData` with stats and tx
         - Create `HolderCommitmentTransaction`
         - Set `channel_state` to `ChannelState::AwaitingChannelReady`
         - Create a channel monitor and provide it with the first
@@ -230,21 +246,37 @@ The message will be handled by `handle_funding_created`:
               - Takes `sighash_all`
               - Provides signature
             - Creates all the HTLC signatures 
+        - `check_get_channel_ready`:
+          - Checks that state is correct
+          - Channel not confirmed so returns `None`
         - Return a `FundingSigned` message with the signature
       - Return a `FundedChannel` and `channel_monitor`
   - Lookup the real channel id in `channel_by_id`:
     - Fail if already populated
-    - `chain_monitor.watch_channel`
+    - `chain_monitor.watch_channel`:
+      - Add to `ChainMontior`'s `monitors` list
+      - Persists new channel
+      - `load_outputs_to_watch`
+        - Registers outputs to watch on chain
     - Push a `SendFundingSigned`event to `pending_msg_events`
     - Insert `Channel::From(FundedChannel)`
 
-Where are we adding the anchors?
 
 ```
 peer_state.channel_by.id contains:
 - channel_id: ChannelPhase::Funded(FundedChannel)
 ```
 
+The `SendFundingSigned` message will be handled by B's `peer_handler`
+when pending messages are cleared out and A will receive a 
+`funding_signed` message from B.
+
+## A receives a funding_signed message from B
+
+This message will be handled by `handle_funding_signed`:
+`internal_funding_signed`:
+- Get the channel from `peer_state.channel_by_id`:
+  - `channel.funding_signed`:
 
 ## Notes for V3
 
@@ -254,3 +286,7 @@ naming after https://github.com/lightning/bolts/pull/1092.
 In `internal_open_channel` we'd also need to reject zero fee channels
 by the same logic.
 
+`build_commitment_stats` needs to have different anchor values.
+`build_commitment_transaction`: do we still subtract anchor from funder?
+
+`insert_non_htlc_outputs` needs to account for anchors
