@@ -87,7 +87,8 @@ message.
 To allow this channel to be opened, B's user will call `accept_inbound_channel`:
 `do_accept_inbound_channel`:
 - Lookup the channel in `inbound_channel_request_by_id`:
-- Create a `InboundV1Channel`
+- Create a `InboundV1Channel::new`
+  - `ChannelContext::new_for_inbound_channel`
 - Call `accept_inbound_channel`:
   - Checks that it is appropriate to send the message
   - `generate_accept_channel_message` creates `AcceptChannel`

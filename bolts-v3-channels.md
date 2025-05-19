@@ -11,19 +11,19 @@ need:
 
 Breaking this up into checklist
 
-[ ] Support a `zero_fee_commitments` feature bit (40/41): Added in #3656
-[ ] Allow channel type using even feature (40)
+[x] Support a `zero_fee_commitments` feature bit (40/41): Added in #3656
+[x] Allow channel type using even feature (40)
 
 ## Add validation for V3 channels
 
-[ ] `open_channel`:
-    [ ] Sender: MUST set `feerate_per_kw` to zero
-    [ ] Receiver: MUST fail if `max_accepted_htlcs` > 114
-    [ ] Receiver: MUST fail if `feerate_per_kw` != 0
-[ ] `open_channel_v2` if `channel_type` includes `zero_fee_commitments`:
-    [ ] Sender: MUST set `commitment_feerate_per_kw` to 0
-    [ ] Receiver: MUST fail if `commitment_feerate_per_kw` =! 0
-[ ] `funding_signed`: if not channel type was negotiated assume it to
+[x] `open_channel`:
+    [x] Sender: MUST set `feerate_per_kw` to zero
+    [x] Receiver: MUST fail if `max_accepted_htlcs` > 114
+    [x] Receiver: MUST fail if `feerate_per_kw` != 0
+[x] `open_channel_v2` if `channel_type` includes `zero_fee_commitments`:
+    [x] Sender: MUST set `commitment_feerate_per_kw` to 0
+    [x] Receiver: MUST fail if `commitment_feerate_per_kw` =! 0
+[x] `funding_signed`: if no channel type was negotiated assume it to
     be `zero_fee_commitments` if it was negotiated
 [ ] `update_fee`:
     [ ] Sender: MUST NOT send `update_fee`
@@ -56,6 +56,20 @@ Breaking this up into checklist
 [ ] MUST spend `shared_anchor` on broadcast to incentivise mining
 
 Finally, turn on feature bit.
+
+Questions:
+- In `internal_open_channel` we use `send_err_msg_no_close`, is this
+  because there is no channel to close?
+- Why doesn't the spec say how many `max_accepted_htlcs` the sender
+  should set?
+
+Resolved Questions:
+- Do the `supports_xyz` checks in feature bits include required?
+  -> Yes, it checks both required and optional bits
+
+List of tests:
+- Test accepting and rejecting v3 channels manually
+- Test zero fee validation 
 
 ## Transaction Format
 
