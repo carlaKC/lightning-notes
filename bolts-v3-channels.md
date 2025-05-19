@@ -9,8 +9,13 @@ need:
 
 ## Implementation checklist
 
-[ ] Support a `zero_fee_commitments` feature bit (40/41)
+Breaking this up into checklist
+
+[ ] Support a `zero_fee_commitments` feature bit (40/41): Added in #3656
 [ ] Allow channel type using even feature (40)
+
+## Add validation for V3 channels
+
 [ ] `open_channel`:
     [ ] Sender: MUST set `feerate_per_kw` to zero
     [ ] Receiver: MUST fail if `max_accepted_htlcs` > 114
@@ -20,14 +25,20 @@ need:
     [ ] Receiver: MUST fail if `commitment_feerate_per_kw` =! 0
 [ ] `funding_signed`: if not channel type was negotiated assume it to
     be `zero_fee_commitments` if it was negotiated
+[ ] `update_fee`:
+    [ ] Sender: MUST NOT send `update_fee`
+
+## Fee calculations 
+
 [ ] Fee paying node for `zero_fee_commitment` channels:
     [ ] Does not need to maintain a fee spike buffer
     [ ] Does not need to account for fees for offered htlcs
-    [ ] Does not need to be able to pay for local anchor?
+    [ ] Does not need to be able to pay for anchors
 [ ] Non-fee paying node for `zero_fee_commitments`:
     [ ] Does not need to worry about remote node needing to pay fees
-[ ] `update_fee`:
-    [ ] Sender: MUST NOT send `update_fee`
+
+## Build Commitment Transaction
+
 [ ] Commitment transaction:
     [ ] Set version to 3
     [ ] Usually a zero fee P2A output
@@ -44,7 +55,7 @@ need:
 [ ] Commitment must be paid for using CPFP (and must submitpackage)
 [ ] MUST spend `shared_anchor` on broadcast to incentivise mining
 
-Q: Why isn't there a similar requirement on the receiver
+Finally, turn on feature bit.
 
 ## Transaction Format
 
