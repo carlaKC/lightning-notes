@@ -83,10 +83,102 @@ Receiver De-Anonymization:
 In this model, a sender can identify whether a recipient is including
 a delay, but then they already know the receiving node anyway.
 
+Assuming RTT:
+* 20 ms: good
+* 50 ms: mid
+* 100 ms: regular
+
+We need 3x RTT to add/remove HTLCs, so we're seldom going to have a value
+that's less than 150ms in practice. This doesn't really leave much time
+for batching?
+
+Problem:
+- We're going to start surfacing hold times
+- People might start using them in pathfinding
+- We don't want to disincentivise delays (good for privacy)
+
 [Censorship despite communication](https://drops.dagstuhl.de/storage/00lipics/lipics-vol316-aft2024/LIPIcs.AFT.2024.12/LIPIcs.AFT.2024.12.pdf)
 - Network level censorship makes LN susceptible to censorship
 - Network level actor can examine the length of messages and interfere
 - This can be used to infer sender/receiver information
+
+===================
+Response on the PR:
+===================
+
+Writing this out in lay-carla's words:
+
+### Problem
+* We're going to start surfacing hold times using attribution data
+* It's probable that people start to use these hold times as input to
+  pathfinding algorithms to get the fastest route possible
+* This would dis-incentivise adding forward delays, which help privacy
+
+Per [@tnull's paper](https://arxiv.org/pdf/2006.12143):
+* An on-path adversary can observe the time between `update_add_htlc`
+  and `update_fulfill_htlc` to get the latency between itself and the
+  recipient
+* It can then compare to known latencies of possible paths (using CLTV +
+  payment amount to eliminate some options) to find highest probability
+  recipient.
+* If the hops along the route add sufficient delay to look like another
+  hop, this estimation will be off (give or take some nuance I'm ignoring)
+
+There's also a trick for deanonymizing senders, but that's fixable by
+adding a reasonably wait before retrying or using a distinct retry 
+path.
+
+* TODO: network level adversary
+
+### Solution
+
+If we change the encoding of our `hold_time` so that the sender can't
+distinguish values < `X`, then we do not dis-incentivise privacy 
+protecting forwarding delays.
+
+`X = reasonable latency for a hop + delay`
+
+For example, if `X=100` then we express our `hold_time` as blocks of
+`100ms` (1 = 100ms, 2 = 200ms etc).
+
+However, this comes at the cost of a sending node not being able to 
+identify incredibly fast forwarding nodes because they're lumped in
+with nodes that took up to `X` to complete.
+
+#### What is a reasonable value?
+
+Per self-reports in the last spec meeting, delay times are:
+* Acinq: 0
+* LND: 50ms or 10 HTLCs
+* LDK: 50ms
+
+Assuming a median network RTT of 50ms we have a minimum hop latency of
+150ms (3 RTT required to add/remove a HTLC). With 2-3 hops per route,
+we'd expect to approximately hit our requirement that delays add 
+sufficient latency to help with deanonymization (3*50 ms = 150 ms = 3x RTT).
+
+Notably, [TOR onion servers RTT](https://metrics.torproject.org/onionperf-latencies.html)
+media sits around 500ms. So realistically we're not really accounting
+for them here at all.
+
+#### What if we need a bigger number in future?
+
+In the case of an in-path attacker, they're measuring the route trip
+from the receiving node so I think that it would be reasonable to add
+any additional delay on the receiver's side:
+* Timing attacks use round trip time, so it doesn't matter where this
+  delay is introduced.
+* The receiver has the best incentive to protect their own privacy and
+  delay the payment.
+* The sender still gets a view of which forwarding nodes are fast, and
+  can ignore the recipient's longer hold
+ 
+So TL;DR, I think that we should just plug in whatever value of `X`
+we think is informed/reasonable and decouple this change from the
+conversation of whether we need to increase this delay today because:
+- We can do it on the receiver to address an in-path attacker
+- Network level adversary is so much more involved; IMO it is sufficient
+  to leave this case no worse than it is today
 
 ## Current Error Format 
 
