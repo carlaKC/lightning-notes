@@ -62,6 +62,27 @@ Takeaways:
 - Q: How does batching help this, doesn't it just get counted towards
   more jittery latency?
 
+Intuition: if you add enough latency that it may be inferred to be an
+additional hop, then you break this heuristic. Therefore, a reasonable
+mean latency to be inserted is the amount of one hop; if each hop does
+this then you're getting quite a lot of ambiguity.
+
+Sender De-Anonymization:
+- Introduce a reasonable delay between retries
+- Sender gets to choose whether they want to be patient for privacy
+
+Receiver De-Anonymization:
+- Receiver can choose to introduce latency on their received payments
+- Attacker measures round trip time, so it doesn't matter where it is
+  introduced
+- Senders in an attributable errors world can give privacy conscious
+  recipients some grace:
+  - They still get good information about the speed of forwarding nodes
+  - In future, we'll have a "slow payment" signal for jamming anyway
+
+In this model, a sender can identify whether a recipient is including
+a delay, but then they already know the receiving node anyway.
+
 [Censorship despite communication](https://drops.dagstuhl.de/storage/00lipics/lipics-vol316-aft2024/LIPIcs.AFT.2024.12/LIPIcs.AFT.2024.12.pdf)
 - Network level censorship makes LN susceptible to censorship
 - Network level actor can examine the length of messages and interfere
