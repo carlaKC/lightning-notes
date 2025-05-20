@@ -12,6 +12,61 @@ Today's errors are insufficient in a few ways, per [1]:
 - Malicious nodes can corrupt the failure message, which prevents the
   sender from pinpointing the source of failure.
 
+## Privacy Concerns
+
+There is currently some debate over whether we should report payments
+with millisecond granularity, or update the encoding to represent
+100ms "chunks".
+
+Concern:
+
+Why can't this be enforced on sender-side?
+- If we give nodes ms-granularity, they'll always be able to cheat and
+  set a different value
+- Technically this is still possible by flipping a high bit in the 
+  payment hold time field, but it would require that senders upgrade
+  to understand it.
+
+How to timing attacks work?
+
+[Counting Down Thunder](https://arxiv.org/pdf/2006.12143)
+- "the off-path unobservability of payments could potentially be subject to a deanonymization attack run by a global passive adversary"
+  Q: How?
+- Attackers may use amount, CLTV and timing analysis to compromise:
+  - On path sender/receiver privacy: forwarders don't know sender/receiver
+  - Receiver's sender privacy: the receiver doesn't know who paid
+- To probe latencies of nodes in the graph:
+  - Construct payments that are bound to fail at different hops and
+    measure latency (can isolate one link at a time)
+  - Track time between `update_add_htlc` and `update_fail_htlc`
+- Destination deanonymization:
+  - Record the time between receiving `update_add_htlc` and 
+    `update_fulfill_htlc`
+  - This gives a timing estimate relating to the recipient
+- Source deanonymization:
+  - Requires failing back a HTLC, and again being chosen as the
+    retry path (which happens instantly)
+  - Observe time between two `update_add_htlc`
+  - This gives a timing estimate relative to the sender
+- It's tempting to blame CLTVs, but removing this fingerprint entirely
+  only decreased precision and recall by 2-3%
+  (we really can never remove amount, so it's not worth thinking about)
+
+Takeaways:
+- We should have a more significant delay between retires if we don't
+  already
+- LND should penalize channel update related errors if it doesn't 
+  already
+- Q: What was the accuracy of latency probing in the paper?
+  IE, how much worse are we making it by surfacing this information
+- Q: How does batching help this, doesn't it just get counted towards
+  more jittery latency?
+
+[Censorship despite communication](https://drops.dagstuhl.de/storage/00lipics/lipics-vol316-aft2024/LIPIcs.AFT.2024.12/LIPIcs.AFT.2024.12.pdf)
+- Network level censorship makes LN susceptible to censorship
+- Network level actor can examine the length of messages and interfere
+- This can be used to infer sender/receiver information
+
 ## Current Error Format 
 
 The node that sends an error can't create an onion packet like the 
