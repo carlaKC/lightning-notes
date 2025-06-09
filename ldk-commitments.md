@@ -279,7 +279,51 @@ This message will be handled by `handle_funding_signed`:
 - Get the channel from `peer_state.channel_by_id`:
   - `channel.funding_signed`:
 
+TODO: finish channel funding flow
+
+# Update Fee
+
+Once a channel is established, how do we go about updating fees?
+
+## Local Update
+
+We'll call `ChannelManager.timer_tick_occurred` periodically to run
+state updates that need to happen once a minute or so. This runs
+for each `per_peer_state` and each `channel_by_id`.
+
+For every `as_funded_mut` channel (ie, once that's funded):
+- We get two possible fee rates:
+  - Non anchor channel fee: for channels without anchors
+  - Anchor channel fee: for channels with anchors
+- `update_channel_fee`:
+  - If the feerate has halved, don't worry (we don't want to bump fee down)
+  - `queue_update_fee`
+    - `send_update_fee`
+      - Pushes into holding cell because force_holding_cell is true
+- If this returns a `DoPersist` we know we need to write this channel.
+
+Dispatching update fee:
+- `fee_holding_cell_htlcs`
+  - Grabs update from `holding_cell_update_fee`
+    - `send_uddate_fee` with `force_holding_cell=false`
+      - This actually returns the `UpdateFee` message we should send
+
+## Remote Update
+- `handle_update_fee`
+  - `internal_update_fee`
+    - If this returns an error, `handle_error`
+      - 
+
 ## Notes for V3
+
+We don't actually want to use the non-anchor feerate for zero fee
+channels because that's a higher fee rate to make sure that the non
+anchor channel gets in.
+
+Check in on calculate_closing_fee_limits:
+[Q]: How are we going to close out zero fee channels - we can't set a
+fee on them if they have an anchor output? They're not allowed to have
+fees if they have dust.
 
 The `anchors_zero_fee_htlc_tx` is no longer aligned with the spec's
 naming after https://github.com/lightning/bolts/pull/1092.
