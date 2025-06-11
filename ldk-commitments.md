@@ -312,9 +312,150 @@ Dispatching update fee:
 - `handle_update_fee`
   - `internal_update_fee`
     - If this returns an error, `handle_error`
-      - 
+
+# Dust Handling
+
+How does LDK think about dust values? These need to be considered for:
+- Fee spike buffers
+- Fees on offered HTLCs
+- Dust exposure
+
+`get_dust_exposure_limiting_feerate`:
+- Returns a feerate that expresses the most aggressive fee rate we'd
+  possibly want to consider.
+- Used to sanity check fee rates we get from peers.
+- This should be very conservative, but not so conservative that we
+  allow a peer to give us an insane fee rate that burns everything we
+  have to dust.
+
+It's used in a few places in the codebase:
+
+`get_available_balance_for_scope`:
+- `htlc_stats` = `get_pending_htlc_stats`:
+  - `get_dust_buffer_feerate` returns a feerate for dust assessments
+    that considers the possibility that we might hit a fee spike
+    - This function is only used for balance checks, so it can add
+      some future-looking predictability to balances
+  - If we use anchors, we don't have to consider this (because we don't
+    have to add fees to our success/timeout txns)
+  - Trims any HTLCs that are under the respective dust limits 
+  - `excess_feerate_opt`:
+    - Pulls any waiting fee rate update that's pending
+    - Or falls back to our current channel fee rate
+    - Subtracts the maximum feerate that we use to limit our peer
+    - This provides a "marginal" feerate above our maximum
+  - `extra_nondust_htlc_on_counterparty_tx_dust_exposure_msat`:
+    - The dust exposure on their commitment + one more HTLC at this rate
+  - If this marginal feerate is non-zero, we also add the marginal extra
+    amount of fees to `on_counterparty_tx_dust_exosure_msat`
+  - In summary, we're considering the possibility that our fees go up
+    and we're above the feerate that we consider to be "safe" to not
+    consider our funds to be siphoned off into fees.
+- `htlc_stats.pending_outbound_htlcs_value_msat` is subtracted from
+  our available `outbound_capacity_msat`
+- `max_dust_exposure_msat` = `get_max_dust_exposure_msat(dust_exposure_limiting_feerate)`
+  - There are two ways that we can limit dust exposure:
+    - `FeeRateMultiplier`: don't allow dust greater than x * feerate
+    - `FixedLimitMsat`: don't allow dust above configured limit
+-  `htlc_success_dust_limit`, `htlc_timeout_dust_limit`
+  - If anchors = `counterparty_dust_limit`, `holder_dust_limit`
+  - If not anchors, needs to include success/timeout
+- If the `extra_nondust_htlc_on_counterparty_tx_dust_exposure_msat` would
+  push us over the dust limit in total fees, we can't add non-dust HTLCs
+- Check both holder and commitment transactions to see whether one
+  more HTLC would push us over dust exposure limits:
+  - If they would, we clamp our available balance to only send below
+    appropriate dust limit so that we don't go over limit
+- If `remaining_msat_below_dust_limit`, we're below the dust limit but
+  might have some sats left that we can send:
+  - If we only have dust capacity left on our side we set our available
+    capacity to be the remaining sub-dust limit (or itself if smaller)
+  - If we have non-dust capacity left, we enforce that all HTLCs are
+    at least the dust limit? Or our minimum HTLC size if above the
+    dust limit
+
+`update_add_htlc`:
+- `htlc_stats` = `get_pending_htlc_stats` 
+  - Doesn't actually use any of the dust checks, just amkes sure that 
+    we don't go over any of our channel restrictions
+
+`send_update_fee`:
+- `htlc_stats` = `get_pending_htlc_stats`
+- `get_max_dust_htlc_exposure_msat(dust_exposure_limiting_feerate)`
+  - Applies a multiplier to the feerate to limit dust for new feerate
+
+`update_fee`:
+- Same as above
+
+`can_accept_incoming_htlc`:
+- `htlc_stats` = `get_pending_htlc_stats`:
+- Checks dust exposure against `max_dust_exposure_msat` which uses the
+  `get_dust_exposure_limiting_feerate` value to get the max msat of
+  dust that we're okay with.
 
 ## Notes for V3
+
+`dust_exposure_limiting_feerate`:
+We never use the dust feerate for zero fee channels because dust is
+independent of feerate in anchor channels (previously, a different fee
+rate would impact whether a HTLC is dust or not because subtracting
+fees off of it would potentially dip them below the dust limit).
+
+It does seem to me that just setting this value to 1 sat/vbyte for
+zero fee channels seems like a bad idea when we have dust protection
+options that depend on the feerate? Although, those aren't ever really
+used in zero comms because we don't hit the checks? We do in 
+`can_accept_incoming_htlc`, for example.
+
+It seems like we're dealing with one value in two different contexts:
+- `get_max_dust_htlc_exposure_msat`: (if configured) uses the limit to
+  calculate the total amount of dust that we'll allow ourselves. 
+- `get_pending_htlc_stats`: to figure out whether one more HTLC will
+  push us over the dust limit (but actually not really for V3, because
+  the dust limit doesn't matter for us).
+
+Q: Can we separate these two things?
+-> Seems like at the very least we can pull out the max dust check
+   into `htlc_stats` so that every single caller doesn't need to get
+   and handle the dust thresholds.
+
+Q: Is this fee rate currently dynamically set? If yes
+  maybe we don't want to hard code it for zero fee?
+- Yes. So when we calculate our fee exposure for other channels we'll
+  get the maximum fee rate that we can think of for the current fee
+  environment. Now we'll always hard-set that to 1 sat/vbyte.
+  - But, comment notes that now that we're not depending on our fee rate
+    for our dust amounts, we don't want to move anyway.
+  - When it's for fee calculation we ignore it
+
+Decision is:
+[x] get_dust_exposure_limiting_feerate: update this to return an option
+[x] get_max_dust_htlc_exposure_msat handles the option
+- optionally refactor dust limit stuff
+
+`get_available_balance_for_scope`:
+----------------------------------
+- `extra_htlc_dust_exposure` > `max_dust_exposure_msat`
+- `on_counterparty_tx_dust_exposure_msat` + `htlc_success_dust_limit` > `max_dust_exposure_msat` +1
+- `on_holder_tx_dust_exposure_msat` + `htlc_timeout_dust_limit` -1 > `max_dust_exposure_msat`
+
+`send_update_fee`:
+------------------
+`on_counterparty_tx_dust_exposure_msat` > `max_dust_exposure_msat`
+`on_holder_tx_dust_exposure_msat` > `max_dust_exposure_msat`
+
+`update_fee`:
+-------------
+`on_counterparty_tx_dust_exposure_msat` > `max_dust_exposure_msat`
+`on_holder_tx_dust_exposure_msat` > `max_dust_exposure_msat`
+
+can_accept_incoming_htlc:
+-------------------------
+`on_counterparty_tx_dust_exposure_msat` > `max_dust_exposure_msat`
+`htlc_success_dust_limit`
+
+-> Moved the dust limits into a helper, can do further refactors if
+   it's helpful.
 
 We don't actually want to use the non-anchor feerate for zero fee
 channels because that's a higher fee rate to make sure that the non
