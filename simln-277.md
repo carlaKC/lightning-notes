@@ -13,3 +13,27 @@ Adding a heap of payment events to improve determinism:
 What do we need from the hashmap?
 - We just lookup the starting payload, and then overwrite
   the values in `generate_payment`
+
+## Review Iteration 2
+
+- `DestinationGenerator` is `Sync` now?
+  - Arc is only `Send` if its contents are `Sync`, because moving
+    an arc to another thread means that there's possibility that 
+    multiple threads are using it
+    (we maybe wouldn't have hit this if using `Box` for getting dyn
+    traits to be sized).
+
+`PaymentEvent`:
+- Contains the details about the next event
+
+`PaymentEventPayload`:
+- Contains the meta information needed to dispatch the payment,
+  bad name
+
+`random_activity_nodes`:
+- Sort the nodes in the network to crate a `network_generator`
+  - This is necessary so that we always fill the same public key
+    in the same place for our weighted index.
+
+`dispatch_producers`:
+- Takes the executors and a sender channel for outputs
