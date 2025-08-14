@@ -194,3 +194,7 @@ Checked parameters for this:
 
 [blocked] Running this a second time
 
+# Changing Distribution
+
+Our variance is so large on the log normal distribution, it'll take
+around 100k queries for us to converge on the expected payment value.

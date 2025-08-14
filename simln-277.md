@@ -37,3 +37,12 @@ What do we need from the hashmap?
 
 `dispatch_producers`:
 - Takes the executors and a sender channel for outputs
+
+## August 8th Review
+
+What happens when our produce events fails?
+- If we exit, we call shutdown
+- We'll drop our sender anyway, which will cause the results loop to
+  exit with nothing left to read
+  - This will also exit with ok (we don't call shutdown in this case)
+- We wait for all of our tasks to exit
