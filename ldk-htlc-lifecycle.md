@@ -284,7 +284,6 @@ monitor_pending_update_adds = [UpdateAddHTLC msg]
          - We don't have any `LocalRemoved` `pending_inbound_htlcs`
          - `send_commitment_no_state_update`:
            - `build_commitment_transaction(local=false, gen by local=true)`
-             - 
            - Sign commitment and return `CommitmentSigned` message
          - Assuming `signer_pending_commitment_update` = false,
            set `signer_pending_commitment_update` = true
@@ -452,7 +451,8 @@ In `check_free_holding_cells`:
        - `monitor_pending_commitment_signed` = `true`
          - `get_last_commitment_update_for_send`
            - Our HTLC is `LocalAnnounced` in `pending_outbound_htlcs`:
-             - Push `msgs::UpdateAddHTLC` to `update_add_htlcs`
+             - Push `msgs::UpdateAddHTLC` to `update_add_htlcs` in our
+               `CommitmentUpdate`
              - `send_commitment_no_state_update`:
                - `send_commitment_no_state_update_for_funding` 
                  - `build_commitment_transaction(local=false, gen_by_local=true)`
@@ -473,17 +473,22 @@ resend_order: RAACommitmentOrder::CommitmentSigned,
 monitor_pending_revoke_and_ack = false
 monitor_pending_commitment_signed = false
 ```
-- `handle_channel_resumption`:
- - Push a `MessageSendEvent::UpdateHTLCs` to `peer_state.pending_msg_events`
 
-TODO: where is our commitment signed pushed?
-NEED TO RESUME HERE!
-   - `handle_monitor_update_completion_actions`
-     - `forward_htlcs`: no HTLCs to forward
-     - `push_decode_update_add_htlcs`: no pending to decode
-     - `finalize_claims`: no claims to finalize
-   - `new_events` is empty (it's only filed when we can claim a payment)
+We have `MonitorRestoreUpdates` with:
+```
+commitment_update = Some(CommitmentUpdate {
+  UpdateAddHTLC, CommitmentSigned
+})
+```
 
+- `handle_channel_resumption` with this `commitment_update`:
+  - Our `commitment_order` is `CommitmentFirst`:
+    - Push `UpdateHTLCs` message
+    - We have no revoke and ack to send 
+  - We don't have any signatures/broadcasting to do
+  - There are no `hltc_forwards` or `decode_update_add_htlcs` to return
+- `handle_monitor_update_completion_actions`: no pending actions
+- No forwards/decodes/finalizes/fails to handle
 
 ## Receiving Revoke and Ack
 
@@ -491,24 +496,12 @@ Once we have send our peer a commitment_signed message, we expect to
 receive a revoke and ack from them.
 
 ```
-Channel Manager:
-  forward_htlcs: []
-```
+Outgoing Channel:
+pending_outbound_htlcs = [OutboundHTLCOutput(OutboundHTLCState::LocalAnnounced)]
 
-```
-Outgoing Channel Context:
-  resend_order: RAACommitmentOrder::RevokeAndAckFirst,
-  monitor_pending_channel_ready: false,
-  monitor_pending_revoke_and_ack: false,
-  monitor_pending_commitment_signed: false,
-  monitor_pending_forwards: [],
-  monitor_pending_failures: [],
-  monitor_pending_finalized_fulfills: [],
-  monitor_pending_update_adds: [],
-
-  pending_outbound_htlcs: OutboundHTLCOutput{ OutboundHTLCState::LocalAnnounced }
-  holding_cell_updates: []
-
+resend_order: RAACommitmentOrder::CommitmentSigned,
+monitor_pending_revoke_and_ack = false
+monitor_pending_commitment_signed = false
 ```
 
 - `handle_revoke_and_ack`:
@@ -517,46 +510,42 @@ Outgoing Channel Context:
     - `chan.revoke_and_ack`:
       - Validates the revocation message received
       - `ChannelMonitorUpdate` / `CommitmentSecret`
-      - `is_awaiting_remote_revoke` = `F`
+      - `is_awaiting_remote_revoke` = `false`
+      - Sets commitments points for the remote peer
       - For each `pending_outbound_htlc`:
-        - Upgrade `LocalAnnounced` to `OutboundHTLCState::Committed`A
-        - `expecting_peer_commitment_signed` = `T`
+        - Upgrade `LocalAnnounced` to `OutboundHTLCState::Committed`
+        - `expecting_peer_commitment_signed` = `true`
       - Assuming no `blocked_monitor_updates`
       - `maybe_free_holding_cell_htlcs` 
         - `free_holding_cell_htlcs`:
           - We don't have any HTLCs in our holding cells, so we return
             `None, []`
       - `require_commitment` is false
-        - `monitor_updaing_paused(F,F,F, [], [], [])`
+        - `monitor_updaing_paused(false, false, false, [], [], [])`
           - No changes to outgoing channel state since false & empty 
 ```
-Outgoing Channel Context:
-  resend_order: RAACommitmentOrder::RevokeAndAckFirst,
-  monitor_pending_channel_ready: false,
-  monitor_pending_revoke_and_ack: false,
-  monitor_pending_commitment_signed: false,
-  monitor_pending_forwards: [],
-  monitor_pending_failures: [],
-  monitor_pending_finalized_fulfills: [],
-  monitor_pending_update_adds: [],
-  is_awaiting_remote_revoke = false,
-  pending_outbound_htlcs: OutboundHTLCOutput{ OutboundHTLCState::LocalAnnounced }
-  holding_cell_updates: []
+Outgoing Channel:
+pending_outbound_htlcs = [OutboundHTLCOutput(OutboundHTLCState::Committed)]
 
+resend_order: RAACommitmentOrder::CommitmentSigned,
+monitor_pending_revoke_and_ack = false
+monitor_pending_commitment_signed = false
+expecting_peer_commitment_signed = true
 ```
-  - `handle_new_monitor_update` with `CommitmentSecret`
-    - `update_channel`
-      - `update_monitor`
-        - `provide_secret`
-    - Assuming `ChannelMonitorUpdateStatus::Completed`:
-      - `updates` = `monitor_updating_restored`
-        - `pending_revoke_and_ack` = `F`
-        - `pending_commitment_signed` = `F`
-        - Both `raa` and `commitment_update` are None, we don't owe
-        - There also aren't any HTLCs we need to deal with
-    - `handle_channel_resumption`: no actions
-    - `handle_monitor_update_completion_actions`: no actions
-    - `self.forward_htlcs(forwards)`: no actions
+
+- `handle_new_monitor_update` with `CommitmentSecret`
+  - `update_channel`
+    - `update_monitor`
+      - `provide_secret`
+  - Assuming `ChannelMonitorUpdateStatus::Completed`:
+    - `updates` = `monitor_updating_restored`
+      - `pending_revoke_and_ack` = `false`
+      - `pending_commitment_signed` = `false`
+      - Both `raa` and `commitment_update` are None, we don't owe
+      - There also aren't any HTLCs we need to deal with
+  - `handle_channel_resumption`: no actions
+  - `handle_monitor_update_completion_actions`: no actions
+  - `self.forward_htlcs(forwards)`: no actions
 
 ## Receiving Commitment Signed
 
