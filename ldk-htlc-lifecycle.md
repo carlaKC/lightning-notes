@@ -613,3 +613,26 @@ The HTLC is irrevocably committed on the outgoing channel!
 
 Once we're committed the HTLC, the downstream peer will send an
 `update_fulfill_htlc` to settle the HTLC back.
+
+- `handle_update_fulfill_htlc` / `internal_update_fulfill_htlc`:
+  - `channel.update_fulfill_htlc`:
+    - `mark_outbound_htlc_removed(OutboundHTLCOutcome::Success)`
+      - Find the `CommittedHTLC` and update it to 
+        `RemoteRemoved(OutboundHTLCOutcome::Success)`
+
+```
+Outgoing Channel:
+pending_outbound_htlcs = [OutboundHTLCOutput(OutboundHTLCState::RemoteRemoved(Success))]
+
+resend_order: RAACommitmentOrder::CommitmentFirst,
+monitor_pending_revoke_and_ack = true
+monitor_pending_commitment_signed = false
+expecting_peer_commitment_signed = false
+```
+
+- `claim_funds_internal`:
+  - The source of the htlc is `PreviousHopData`:
+    - `claim_funds_from_hop`:
+      - `claim_mpp_part`:
+        - `get_update_fulfill_htlc_and_commit`:
+        
