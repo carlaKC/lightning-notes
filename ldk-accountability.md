@@ -169,7 +169,17 @@ ResourceState {
 }
 ```
 
-TODO: finish tracking what we'd need here.
+To keep our state in sync with the state of channel manager:
+- For each of the htlcs that we're adding:
+  - For each outgoing channel:
+    - Iterate through `pending_outbound_htlcs` and calculate risk
+    - [ ] We don't have htlc fee here
+  - For each incoming channel:
+    - Iterate through `pending_inbound_htlcs` and delete any `in_flight`
+      that we're tracking that are no longer present.
+
+Since this is an internal implementation, we can rely on the locking
+being properly handled and not blocking for too long.
 
 #### Externally
 
