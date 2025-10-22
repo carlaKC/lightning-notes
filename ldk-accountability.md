@@ -202,3 +202,54 @@ Missing:
 
 tl;dr: doable, but we'd need to surface some new information and surface
 information about our history to the trait.
+
+## Setting Accountability Signal
+
+Where will we need to set/save this signal?
+
+`UpdateAddHTLC`:
+- So that we can receive/send the signal in P2P messages
+- We use `impl_writeable_msg!` to persist this
+  * We can possibly skip this as follows: `(1, accountable, (legacy, u8, || None::<u8>))`
+
+When we call `forward_htlcs`:
+- `PendingHTLCInfo` contains all the information about the current htlc
+  -> We should add an `accountable` signal to `PendingHTLCInfo`
+
+Where do we construct these?
+- `get_pending_htlc_info`: we have the incoming `UpdateAddHTLC` on hand
+- `forward_intercepted_htlc`: from values in `PendingAddHTLCInfo`
+  -> We should add `accountable` to `PendingAddHTLCInfo` 
+- `create_fwd_pending_htlc_info`: we have the incoming `UpdateAddHTLC`
+- `create_recv_pending_htlc_info`: we appear to mostly have the
+  `UpdateAddHTLC` around at call sites, even though we don't provide
+  it here (we use components).
+- `peel_payment_onion`: we have the incoming `UpdateAddHTLC`
+
+Places where we need to add `accountable`:
+- `UpdateAddHTLC`
+- `PendingHTLCInfo`
+- `PendingAddHTLCInfo`
+
+Things to mention in the issue:
+- I'd like to implement blip04 (which also needs an update)
+- Persistence options:
+  - Explicitly do not write it (because we can tolerate dropping)
+  - Just write it as an odd TLV and be happy to stop when deprecated
+
+For now:
+- We set the values that we'll eventually use in our `channel::send_htlc`
+  just based on the `source` that we're given
+
+In future:
+- We're going to call our trait in `forward_htlcs` to get our outgoing
+  accountable status.
+- This value will be put into `forward_htlcs`:
+  - `HTLCForwardInfo::AddHTLC`
+    - Add the signal to this variant
+
+TODO: where we have to persist for the outgoing signal (forwards/holding cell)
+
+Q; can we add this signal to `PendingHTLCInfo`'s `routing` which is
+`PendingHTLCRouting`?
+-> No, this is created directly from our onion packet
