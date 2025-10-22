@@ -181,6 +181,12 @@ To keep our state in sync with the state of channel manager:
 Since this is an internal implementation, we can rely on the locking
 being properly handled and not blocking for too long.
 
+TODO: we also need to be able to track reputation/outgoing reputation
+values, which means we need to know when things are settled/failed. I
+think this would always be okay because we hit this at the process
+forwards stage (where settles/fails are piped) but might need to worry
+about consistency a bit there.
+
 #### Externally
 
 - We get a `allocate_htlc_resources` call, which gives us our new set
