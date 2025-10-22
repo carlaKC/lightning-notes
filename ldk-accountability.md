@@ -52,7 +52,7 @@ give us a response for a HTLC?*
 We define a trait that can implement custom DOS protections:
 ```
 pub trait ResourceManager {
-
+  allocate_htlc_resources(Vec<u64, PendingAddHTLCInfo>) -> Result<(), ()>
 }
 ```
 
@@ -95,8 +95,9 @@ accepts responses from the trait implementation:
 
 ### Persistence
 
-Q: How does persistence work?
+- `forward_htlcs` are written in `ChannelManager::write`
+- `pending_intercepted_htlcs` are written in `ChannelManager::write`
 
-### Replays
-
-Q: How do replays on restart work?
+We will have to return a `NotifyOption` in our processing of pending
+resource allocations so that we can store these htlcs. On restart,
+we'll play all htlcs awaiting notification to the manager.
