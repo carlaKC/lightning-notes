@@ -87,11 +87,17 @@ by adding a task to `BackgroundProcessor::start()` which calls
 - Lock `pending_resource_allocation`
 - Pass all htlcs that are `AwaitingNotification` to the trait
 
+If we don't want to poll here, we can use a `Notifier`?
+
 There will be a `allocate_resources` handler on `ChannelManager` which
 accepts responses from the trait implementation:
 - Lock `pending_resource_allocation`
   - Lookup htlc, fail if not `AwaitingResponse`
   - Set `Allocated` in map
+
+As is the case with `pending_intercepted_htlcs`, we'll add handling
+in `do_chain_event` that makes sure that we cancel these back if we
+don't hear back in time.
 
 ### Persistence
 
@@ -101,3 +107,82 @@ accepts responses from the trait implementation:
 We will have to return a `NotifyOption` in our processing of pending
 resource allocations so that we can store these htlcs. On restart,
 we'll play all htlcs awaiting notification to the manager.
+
+### Default Implementation
+
+To start with, we'll just have experimental signaling support that
+copies the incoming value to the outgoing value. This will be trivial
+to implement.
+
+To make sure that this API will work, take a look at what implementing
+reputation in LDK would look like (internally and externally).
+
+#### Internally
+
+We have `per_peer_state` / `channel_by_id` and we only care about
+`FundedChannel` state (since others are pre-htlcs), which keeps all
+of its data in `ChannelContext`:
+
+When we are notified of a htlc that we need to assign resources for,
+we are given the following information:
+```
+pub(super) struct PendingAddHTLCInfo {
+	pub(super) forward_info: PendingHTLCInfo {
+	  pub routing: Forward {
+		onion_packet: msgs::OnionPacket,
+		short_channel_id: u64, // This should be NonZero<u64> eventually when we bump MSRV
+		blinded: Option<BlindedForward>,
+		incoming_cltv_expiry: Option<u32>,
+		hold_htlc: Option<()>,
+	  },
+	  pub incoming_shared_secret: [u8; 32],
+	  pub payment_hash: PaymentHash,
+	  pub incoming_amt_msat: Option<u64>,
+	  pub outgoing_amt_msat: u64,
+	  pub outgoing_cltv_value: u32,
+	  pub skimmed_fee_msat: Option<u64>,
+    },
+	prev_outbound_scid_alias: u64,
+	prev_htlc_id: u64,
+	prev_counterparty_node_id: PublicKey,
+	prev_channel_id: ChannelId,
+	prev_funding_outpoint: OutPoint,
+	prev_user_channel_id: u128,
+}
+
+```
+-> We can identify the HTLC uniquely on the incoming channel (scid/id)
+-> We can calculate the fee
+-> We know the incoming cltv
+
+We need to track the following internal state:
+```
+channels HashMap<u64, ResourceState>
+```
+
+Where we maintain the following additional state:
+```
+ResourceState {
+  incoming_revenue: u64,
+  outgoing_reputation: u64,
+  in_flight: HashMap<u64, BucketAllocation> 
+}
+```
+
+TODO: finish tracking what we'd need here.
+
+#### Externally
+
+- We get a `allocate_htlc_resources` call, which gives us our new set
+  of htlcs for each channel (+ all info we need, like expiry).
+- `PaymentForwarded` informs us if the forward was successful.
+- `HTLCHandlingFailed` informs us if the forward failed.
+
+Missing:
+- [ ] We don't have HTLC id on any of our events, which makes it
+      difficult to identify them
+- [ ] We don't have an easy way to get an idea of our current state
+      when we start up?
+
+tl;dr: doable, but we'd need to surface some new information and surface
+information about our history to the trait.
