@@ -226,30 +226,72 @@ Where do we construct these?
   it here (we use components).
 - `peel_payment_onion`: we have the incoming `UpdateAddHTLC`
 
+Q; can we add this signal to `PendingHTLCInfo`'s `routing` which is
+`PendingHTLCRouting`?
+-> No, this is created directly from our onion packet
+
+
+- We're going to call our trait in `forward_htlcs` to get our outgoing
+  accountable status.
+- We can get the signal from `source` here, even though we could
+  _technically_ set it later inside of `channel`
+- This value will be put into `forward_htlcs`:
+  - `HTLCForwardInfo::AddHTLC`
+    - Add the signal to this variant
+- We'll process the htlcs in `forward_htlcs` in 
+  `process_pending_htlc_forwards`:
+  - We'll have our signal already here, because we called a trait
+  - We put in a holding cell as `HTLCUpdateAwaitingAck::AddHTLC` 
+    -> We will need to add the signal here
+  - We then graduate to `pending_outbound_htlcs` as `OutboundHTLCOutput`
+    -> We will need to add the signal here
+    - From here, we'll make our `UpdateAddHTLC`
+
 Places where we need to add `accountable`:
-- `UpdateAddHTLC`
-- `PendingHTLCInfo`
-- `PendingAddHTLCInfo`
+- [x] `UpdateAddHTLC`
+- [x] `PendingHTLCInfo`
+- [-] `PendingAddHTLCInfo`: we already have `PendingHTLCInfo`,
+      and we need this information because this is what we store in
+      `forward_htlcs`
+- [ ] HTLCForwardInfo
+- [x] `HTLCUpdateAwaitingAck::AddHTLC`
+- [x] `OutboundHTLCOutput` (can add to UpdateAddHTLC)
+
+Figuring out where to switch the HTLC signal:
+- We are going to make the call in `forward_htlcs`
+- We need to have the incoming signal on hand for when we add
+  interception:
+  - That is contained in: `PendingHTLCInfo`
+- We also need to be able to set the `outgoing_accountable` from
+  `forward_htlcs` and have it propagate through to the outgoing link:
+  - This information is stored in `HTLCForwardInfo::AddHTLC`
+    - This contains `PendingAddHTLCInfo`:
+      - This contains `forward_info` which is a `PendingHTLCInfo`
+        (already has the incoming signal)
+
+Q: Where should we put it?
+- `forward_info`: this is passed in, we don't create it
+  We'd need to set it really early on as `None` and then replace it
+  with our outgoing signal in `forward_htlcs`
+
+Option 1:
+- Put `outgoing_accountable` in `PendingHTLCInfo`
+- Issue here is that we create this info pretty early on, and then
+  have to mutate it later.
+
+Option 2:
+- Turns out this is actually going to an issue if we put it in
+  `PendingAddHTLCInfo` as well, it's just shorter-lived problem.
+- It also seems a bit disjunct to have `incoming` in `forward_info`
+  and then `outgoing` on the higher layer (now that I've written it)
+
+## Notes for an issue/PR
 
 Things to mention in the issue:
 - I'd like to implement blip04 (which also needs an update)
 - Persistence options:
   - Explicitly do not write it (because we can tolerate dropping)
   - Just write it as an odd TLV and be happy to stop when deprecated
-
-For now:
-- We set the values that we'll eventually use in our `channel::send_htlc`
-  just based on the `source` that we're given
-
-In future:
-- We're going to call our trait in `forward_htlcs` to get our outgoing
-  accountable status.
-- This value will be put into `forward_htlcs`:
-  - `HTLCForwardInfo::AddHTLC`
-    - Add the signal to this variant
-
-TODO: where we have to persist for the outgoing signal (forwards/holding cell)
-
-Q; can we add this signal to `PendingHTLCInfo`'s `routing` which is
-`PendingHTLCRouting`?
--> No, this is created directly from our onion packet
+- Is it okay to change the API of `send_htlc_and_commit`?
+  I'm not sure how much this is are used? We could also hard-set a
+  zero value
