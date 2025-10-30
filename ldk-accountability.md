@@ -295,3 +295,58 @@ Things to mention in the issue:
 - Is it okay to change the API of `send_htlc_and_commit`?
   I'm not sure how much this is are used? We could also hard-set a
   zero value
+
+Q: Should we put this in `PendingHTLCRouting`?
+- This is kept in `PendingAddHTLCInfo`, which is what we will
+  store in our `forward_htlcs`
+- If we set our outgoing in `process_pending_forwards` then we don't
+  have to set anything!
+
+```
+A = process_forward_htlcs (called by internal_process_pending_htlc_forwards)
+B = forward_htlcs (where we push htlc to ChannelManager.forward_hlcs) 
+```
+## Design Runthrough
+
+Priorities?
+- Performance
+
+Questions to answer:
+- Should it be part of general interception?
+- Should it be in `forward_htlcs` or `process_forward_htlcs`?
+  (plus, before or after custom interception?)
+- How do we handle asynchronous responses?  
+- How should we handle non-response from API?
+- How should we handle interceptor errors?
+- What do we need to persist?
+
+Notes:
+- Consensus from issues is that we want to have a totally separate API
+  for this
+- Seemed pretty clear that we don't want to use events for this, we
+  want to have a trait that people can sub out if they want to.
+- Where should we put it:
+  - `process_forward_htlcs`:
+    - Locks: `per_peer_state`
+    - Pro: outgoing channel is chosen, important for reputation algo
+    - Con: logic seems a little out of place here (ie interception elsewhere)
+  - `forward_htlcs`:
+    - Locks: `forward_htlcs`, just map is locked
+    - Con: outgoing channel can change
+    - Pro: co-located with other interception code
+- Inline handler vs async callback:
+  - Inline: if we're only going to surface internally
+  - Callback: if we want to allow external impls
+- Non-response?
+  - Inline: "just don't"? 
+  - Callback: do_chain_event will time out htlcs that are expiring
+
+Q: [KC] double check locking on forward_htlcs
+Q: [KC] could we pick the optimal_channel sooner?
+-> If yes, maybe do this in forward_htlcs (pending above lock check)
+Q: [M] Where would be a good point to notify reputaiton manager of
+   settle/fail
+Q: [M] restarts and replays
+
+Q[Clara]: Should we allow aggregating reputation with all outgoing channels
+with a single peer?
