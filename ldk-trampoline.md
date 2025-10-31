@@ -84,10 +84,49 @@ forward the payment to `F`, sending the `blinding_point` in
 `update_add_htlc` to `F` so that they can decrypt their data.
 
 `send_payment_with_route`:
+- Created a `FixedRouter` from our `Route` (just returns route)
 - `self.pending_outbound_payments.send_payment` 
   - `self.send_payment_for_non_bolt_12_invoice`:
-    - `route` = `find_initial_route`: (1)
-    - `onion_session_priv` = `add_new_pending_payment`: (2)
-    - `res` = `pay_route_internal` (3)
+    - `route` = `find_initial_route`: returns selected route
+    - `onion_session_priv` = `add_new_pending_payment`: (1)
+    - `res` = `pay_route_internal` (2)
 
-(1) `find_initial_route`:
+(1) `add_new_pending_payment`:
+- Add `payment_id` to `pending_outbound_payments`
+- `payment, onion_session_priv` = `create_pending_payment`
+  - Fill `onion_session_priv` vec with random bytes
+  - Insert the `session_privs` into the `PendingOutboundPayment` 
+-> `onion_session_priv`
+
+(2) `pay_route_internal`:
+- Does some basic validation on the path 
+- `results.push` `send_payment_along_path` (2.1)
+- Iterate through results and return success/failure
+
+(2.1) `send_payment_along_path` is a closure provided at the top
+of our call stack, using `ChannelManager::send_payment_along_path`:
+- `onion_packet, msat, cltv` =  `create_payment_onion` (2.1.1)
+- Get first channel and validate it can send payment
+  - `send_hltc_and_commit` with `HTLCSourceOutboundRoute`
+  - `handle_new_monitor_update`
+
+(2.1.1) `create_payment_onion` / `create_payment_onion_internal`:
+Assuming that we have the following `Route`:
+```
+hops: [A, B, C]
+blinded_tail:
+  trampoline_hops: [C, F]
+  blinded_tail: H, B(I), B(J)
+```
+
+This would go over the following route, where `{}` indicates a path
+found by the tramoplines:
+`A - B - C -{D - E}- F -{G}- H - B(I) - B(J)`
+
+- `tramopoline_payloads` =`build_trampoline_onion_payloads` (2.1.1.1)
+- `trampoline_session_priv` = `compute_trampoline_session_priv`
+- `onion_keys` = `construct_trampoline_onion_packet`
+- `trampoline_packet` = `construct_trampoline_onion_packet`
+- `build_onion_payloads`
+- `construct_onion_keys`
+- `construct_onion_packet`
