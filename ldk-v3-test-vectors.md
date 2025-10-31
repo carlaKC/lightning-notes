@@ -180,3 +180,6 @@ Q: Can I override this?
         - This needs the `countersignatory_keys.revocation_basepoint`
 
 So: tl;dr, it's going to be a bit hacky for me to replace this.
+
+For HTLCs we need to fill in: 
+{ $htlc_idx: expr, $counterparty_htlc_sig_hex: expr, $htlc_sig_hex: expr, $htlc_tx_hex: expr }
