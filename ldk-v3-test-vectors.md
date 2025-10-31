@@ -127,3 +127,56 @@ Debugging difference between transactions:
 - Our `to_local` is incorrect
 - CLTV and `local_delayedpubkey` look fine, so we must be missing
   overwriting the revocation key somewhere?
+
+Is this revocation_pubkey that we get in the test vectors already
+tweaked somehow? Are we double tweaking it?
+
+Debugging `to_local`:
+1) Check `to_self_delay`:
+- We are using a `to_self_delay` = 720 (just checked this in logs).
+
+2) Check `local_delayedpubkey`:
+- The pubkey that we use when we're building our `to_local` is the
+  same key as when I create a `DelayedPaymentKey` from Alice's
+  `delayed_payment_basepoint` vector and the `per_commitment_point`.
+
+`0239bba2f4a87c71d7d30f50e8eddfc6de2e90c78f55bb7525fa60436bee1b6def`
+ 
+3) Check `revocationpubkey`
+
+This is the `revocationpubkey` in Alice's commitment (it is giving Bob
+the chance to claim Alice's funds, because she might be the one who
+is cheating).
+
+It uses:
+- Alice's `per_commitment_point`
+- Bob's `revocation_basepoint`
+
+We have the fully formed pubkey, which we need to be override. I was
+setting the pubkey to the basepoint, so I was double tweaking it.
+
+The key is set in: `TxCreationKeys.revocation_key`
+
+I'm quickly checking this hypothesis by replacing
+`TxCreationKeys.revocation_key` with the hard coded pubkey in the test
+vectors and then I'll see what I can do about override!
+
+IF my test passes now: then I have to:
+- Find a way to override `TxCreationKeys.revocation_key`
+OR
+- Ask tbast for the `revocation_basepoint` for Bob so that I can over
+  write the secret and then have the test 
+
+This passed!!
+
+So: the `revocation_pubkey` given in the test vector is the fully
+derived key.
+
+Q: Can I override this?
+- `insert_non_htlc_outputs` has `TxCreationKeys` inserted
+  - `build_outputs_and_htlcs` threaded through
+    - `CommitmentTransaction::new`:
+      - Creates `TxCreationKeys::from_channel_static_keys`
+        - This needs the `countersignatory_keys.revocation_basepoint`
+
+So: tl;dr, it's going to be a bit hacky for me to replace this.
