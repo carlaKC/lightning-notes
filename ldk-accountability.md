@@ -341,13 +341,6 @@ Notes:
   - Inline: "just don't"? 
   - Callback: do_chain_event will time out htlcs that are expiring
 
-Q: [KC] double check locking on forward_htlcs
-Q: [KC] could we pick the optimal_channel sooner?
--> If yes, maybe do this in forward_htlcs (pending above lock check)
-Q: [M] Where would be a good point to notify reputaiton manager of
-   settle/fail
-Q: [M] restarts and replays
-
 - `send_htlc`: accepts an `accountable`, called by:
   - `queue_add_htlc`:
   - `free_holding_cell_htlcs`
@@ -372,3 +365,35 @@ Q: Should this be a `Option` or a `bool`?
 
 `channelmanager::send_payment_along_path`
 - Calls `channel.send_htlc_and_commit` -> `send_htlc`
+
+## Open Questions
+
+Q: [KC] double check locking on forward_htlcs
+- `forward_htlcs`
+  - Briefly holds lock on intercepts to add / remove:
+    - `held_htlcs = self.pending_intercepted_htlcs.lock().unwrap();`
+    - `pending_intercepts = self.pending_intercepted_htlcs.lock().unwrap()`
+  - Briefly hold `forward_htlcs` to push each `pending_add`
+    - `forward_htlcs.lock()`
+  - Once off hold `pending_events` lock to push all new events
+
+Where is this called?
+- `process_pending_update_add_htlcs`: no locks held
+- `internal_process_pending_htlc_forwards`: no locks
+- `forward_intercepted_htlc`: no locks held
+- `handle_release_held_htlc`: no locks held
+
+-> This is a big advantage, we're not blocking anything critical here.
+-> VS: `process_forward_htlcs` which holds the peer_state_lock
+
+Q: [KC] could we pick the optimal_channel sooner?
+- We have to hold the `peer_state` lock to get the optimal channel to
+  forward on, because we're going to need to pull the balance of the
+  channel (pretty unavoidable).
+- If we don't want this, we could pull the optimal channel balance,
+  release the lock and then check reputation *but* this means that we
+  will lose consistency.
+
+Q: [M] Where would be a good point to notify reputaiton manager of
+   settle/fail
+Q: [M] restarts and replays
