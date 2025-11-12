@@ -348,5 +348,27 @@ Q: [M] Where would be a good point to notify reputaiton manager of
    settle/fail
 Q: [M] restarts and replays
 
-Q[Clara]: Should we allow aggregating reputation with all outgoing channels
-with a single peer?
+- `send_htlc`: accepts an `accountable`, called by:
+  - `queue_add_htlc`:
+  - `free_holding_cell_htlcs`
+  - `send_htlc_and_commit`:
+
+Q: Should we surface on `send_htlc_and_commit` or just set to `Some(0)`?
+- It _seems_ like this is only really used internally anyway, so it's
+  okay to just use a bool.
+
+Q: Should this be a `Option` or a `bool`?
+- On the "external" facing API things, this makes sense as a bool
+  - Somebody absolutely will set `Some(1)` meaning for that to be true
+    but our funny `Some(7)` will fuckem
+- Just have the `Option` where we've got the persistence layer that
+  we can't handle., conversion is really easy.
+
+[Forwards] `channelmanager::process_forward_htlcs`:
+- Calls `queue_add_htlc` -> `send_htlc`
+
+[Forwards] `channel::free_holding_cell_htlcs`:
+- Calls `send_htlc` using `accountable` from `HTLCUpdateAwaitingAck::AddHTLC`
+
+`channelmanager::send_payment_along_path`
+- Calls `channel.send_htlc_and_commit` -> `send_htlc`
