@@ -183,3 +183,9 @@ So: tl;dr, it's going to be a bit hacky for me to replace this.
 
 For HTLCs we need to fill in: 
 { $htlc_idx: expr, $counterparty_htlc_sig_hex: expr, $htlc_sig_hex: expr, $htlc_tx_hex: expr }
+
+## PR Cleanup
+
+[~] Move test vector code to its own file? -> Not worth it
+[x] Remove skip rust fmt
+[x] Test functions shared, and in test utils
