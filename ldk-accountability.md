@@ -397,3 +397,35 @@ Q: [KC] could we pick the optimal_channel sooner?
 Q: [M] Where would be a good point to notify reputaiton manager of
    settle/fail
 Q: [M] restarts and replays
+
+Wondering again where we should put the "boundary" of the encoding
+format (that it's an option u8) - it's currently leaking out of the
+impl a bit. Let's isolate this to just the serialization layer?
+
+`create_recv_pending_htlc_info`:
+- Called with `get_pending_htlc_info`, has raw `UpdateAddHTLC`
+- `forwarding_channel_not_found`: has teh `PendingAddHTLCInfo` 
+ -> move mapping into UpdateAddHTLC!
+
+Checking test against another: `fails_paying_after_rejected_by_payee`:
+- Create two nodes + channels between
+- Setup payment + route params
+- Call `send_payment` on disptching node
+- `check_added_monitors`: sending node x1
+- `get_and_clear_pending_msg_events`
+- Receiving node: `handle_update_add_htlc` 
+- `check_added_monitors`: receiving node x1
+- `do_commitment_signed_dance`
+- `expect_and_process_pending_htlcs`
+- `expect_payment_claimable`
+
+At every point in the pipeline, if we previously had no accountable
+signal we'll just fill in `false`:
+- eg: `OutboundHTLCState::LocalAnnounced` will fill in false if we
+  don't have a value set in our outbound added htlc.
+- eg: `PendingHTLCInfo` will set `false` if it wasn't provided on
+  the incoming link
+
+As this is written, we're looking at `process_pending_forwards` as
+the place where we'd make this call (while we're holding the peer lock).
+-> Start with this, get more complicated if we need it.
