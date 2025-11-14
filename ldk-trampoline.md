@@ -130,3 +130,122 @@ found by the tramoplines:
 - `build_onion_payloads`
 - `construct_onion_keys`
 - `construct_onion_packet`
+
+## 3983
+
+### Enforce Trampoline Constraints
+
+`check_trampoline_onion_constraints`:
+- Accepts the `outer_hop_data` and the `cltv` and `amount` from
+  the trampoline onion
+- Checks that the amount is correct
+
+We call this in:
+- `create_fwd_pending_htlc_info`
+  - `get_pending_htlc_info` (1)
+  - `peel_payment_onion` (2)
+- `create_recv_pending_htlc_info` 
+  - `get_pending_htlc_info` (1)
+  - `peel_payment_onion` (2)
+  - `forwarding_channel_not_found` (3)
+
+(1) `get_pending_htlc_info`:
+- Called by `process_pending_update_add_htlcs`:
+  - We decode our `UpdateAddHTLC`'s payload, returning
+    - `Hop`: tells us what the next item is (receive/forward etc)
+    - `NextPacketDetails`: outgoing values, scid or trampoline
+  - Perform various checks on the htlc forward
+  - Call `get_pending_htlc_info` to create forward or receive
+    - Push this into `forward_htlcs` that'll be processed later
+
+(2) `peel_payment_onion`:
+- Only called in tests, possibly used to provide a onion handling util?
+
+(3) `forwarding_channel_not_found`:
+- If we have a `HTLCForwardInfo::AddHTLC`:
+  - And it is a htlc that was supposed to be forwarded and a valid
+    phantom ID:
+    - Create phantom receive payload and then push it to our phantom
+      receives
+
+So, we are in `process_pending_update_add_htlcs` and we get some
+trampoline payloads!
+- Currently, we hit `can_forward_htlc` / `can_forward_htlc_to_outgoing_channel`:
+  - We fail the HTLC out, not wanting to forward trampoline stuff   
+
+Take a look at the tests!
+
+What do we have before this:
+- `test_trampoline_forward_payload_encoded_as_receive`
+- `test_trampoline_single_hop_receive` (`do_test_trampoline_single_hop_receive`)
+- `test_trampoline_unblinded_receive` (`do_test_trampoline_unblinded_receive`)
+- `test_trampoline_forward_rejection`
+
+After this we introduce 
+
+(1) `test_trampoline_unblinded_receive_(underpay/normal)`:
+- It modifies `do_test_trampoline_unblinded_receive` to only do underpay
+  (vs previously was for success/fail)
+
+(2) `test_trampoline_blinded_receive_enforced_constraint_cltv`
+    `test_trampoline_enforced_constraint_cltv`
+- It has its own helper, `do_test_trampoline_unblinded_receive_constraint_failure`
+
+Q: Can we get away with a unified test helper for testing unblinded?
+- Successful (all correct)
+- Not successful (amount / cltv bad)
+
+Underpayment:
+- We modify the FinalOnionHopData to have the higher amount
+- Depending on underpay, we settle or fail the htlc 
+
+CLTV issues:
+- If we want the CLTV to be too much, we manipulate the blinded_hop_cltv
+- We assert on the failure accordingly 
+
+Now, we do have different tests for blinded and un-blinded!
+The goal is to have *unified* test helpers: one for unblinded, one for
+blinded. They should each be able to settle or fail.
+
+Comparison between:
+(A) `do_test_trampoline_unblinded_receive_constraint_failure`
+(B) `do_test_trampoline_unblinded_receive` 
+
+Common values inline, differences marked by (A)/(B):
+- Creates a three hop network and payment details
+- (A) Sets up route:
+  - Creates a real set of `TrampolineForwardTlvs`
+  - Blinds the TLVs with real blinding point
+  - Sets a manipulated cltv detla in `TrampolineHop`
+- (B) Sets up route:
+  - Sets an mock `hops` in `blinded_tail`  (because replacing anyway)
+- Override randomness
+- `send_payment_with_route`
+- Creates replacement onion:
+  - (A): with the `amt_msat` of the payment
+  - (B): with the override amount for underpayment
+- Constructs onion with new inner packet
+- Check monitors
+- `get_and_clear_pending_msg_events`
+- Get update add and replace onion
+- Generate `args` to pass along path from `PassAlongPathArgs::new`
+  - (A): sets preimage, no claimable event, failure event
+  - (B): sets preimage, no claimable event, failure event *if underpay*
+         else just sets paymentsecret (this is the case it succeeds)
+         -> We don't actually need this I think?
+         [ ] Remove this!
+- `do_pass_along_path` 
+- Failure case:
+  - `get_htlc_update_msgs(2/1)` / `1.handle_update_fail_htlc(2)`
+  - `do_commitment_signed_dance(1, 2)` 
+  - `get_htlc_update_msgs(1/0)` / `0.handle_update_fail_htlc(1)`
+  - `do_commitment_signed_dance(0, 1)`
+  - Match failure:
+    - Get expected payment data
+    - Set `LocalHTLCFailureReason`
+    - `expect_payment_failed_conditions`
+- Success case:
+  - (A) Does not have a failure case
+  - (B) `claim_payment`
+
+-> Managed to combine these into one helper!
