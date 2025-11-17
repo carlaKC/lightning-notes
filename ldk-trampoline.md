@@ -249,3 +249,17 @@ Common values inline, differences marked by (A)/(B):
   - (B) `claim_payment`
 
 -> Managed to combine these into one helper!
+
+#### Blinded vs Unblinded
+
+Q: Can I update `do_test_trampoline_unblinded_receive` to also cover the
+blinded case?
+
+What needs to change?
+- Calculate shared trampoline secret
+- Calculate blinding point + create proper receive tlvs
+- Create a blinded path for carol with real values
+- Don't replace the onion
+
+Done - managed to combine tests into make a single test that covers
+both blinded and unblinded.
