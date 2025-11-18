@@ -142,3 +142,22 @@ M --(expiry T+10) --> A --(expiry T+5)--> M
 
 Making HTLCs V3 is challenging because we need to update our commitment
 dance - you don't know beforehand what you should be signing?
+
+## Final Review
+
+We interoppin. Final review pass on specification.
+
+Bolt 02:
+- `open_channel` notes:
+  - Notes that we must "take the cost of htlc transactions into account"
+  - This is because we don't cost the HTLC internally anymore, it's
+    exogenous so you want to set a dust limit that makes sure that
+    your htlc won't end up as dust when it comes time to claim it on
+    chain.
+
+Q: what is LDK setting as its dust limit for zero fee commitments?
+
+A few notes:
+- You must support submitpackage
+- You might hit package limits with batched success claims
+- You can only have one descendent in mempool
