@@ -429,3 +429,125 @@ signal we'll just fill in `false`:
 As this is written, we're looking at `process_pending_forwards` as
 the place where we'd make this call (while we're holding the peer lock).
 -> Start with this, get more complicated if we need it.
+
+## PR Runthrough
+
+Going through each commit before opening up the PR, with a specififc
+focus on "points of resumption" and persistence.
+
+### Add experimental accountable signal to update_add_htlc
+
+- Adds an `Option<u8>` to the `update_add_htlc` message
+  - We encode this as a single byte, so u8 is appropriate
+  - Will this include a length field? yes, and it should
+  - We add helpers that convert a bool to 7/0 so that impls don't have
+    to worry about the details of the accountable signal. Likewise
+    we map only 7 to true, and otherwise false
+
+Persistence?
+- The TLV is persisted as 106823, which is odd so we are upgrad and
+  downgrade safe.
+
+Restarts?
+Receiving a HTLC:
+- When we receive an `update_add_htlc` from our peer, we handle it
+  with `internal_update_add_htlc` and call `optionally_notify` with
+  our persistence outcome.
+- We only ever return `SkipPersistHandleEvents` or `SkipPersistNoEvents`,
+  neither mean that we need to write anything (this makes sense, because
+  we don't need to remember our received update_add_htlcs until we
+  have received a commitment for them).
+- The htlc goes into `pending_inbound_htlcs` as `RemoteAnnounced`
+  - When we create brand new channels, this is empty
+  - When we write the channel:
+    - We count the number of dropped htlcs (any `RemoteAnnounced`)
+    - We write all htlcs that are *not* remote announced:
+    - We'll care about writing of accountable values later once we
+      get to the stage where we would actually write these HTLCs!
+  - When we read the channel, we read all our inbound htlcs back out
+
+Once we receive a `commitment_signed` the HTLC will be in state
+`AwaitingRemoteRevokeToAnnounce`:
+- This contains a `InboundHTLCResolution::Pending` which contains the
+  full `update_add_htlc`, so the accountability signal will be kept.
+- If we go down, we'll now remember this HTLC because we have written
+  it to disk as part of channel. The accountable signal is included in
+  `update_add_htlc`.
+
+Once we have sent a `revoke_and_ack` the HTLC will be in state
+`AwaitingAnnouncedRemoteRevoke`:
+- This also contains a `InboundHTLCResolution::Pending` which has the
+  `update_add_htlc` in it.
+
+We send our peer a `commitment_signed`, and receive a `revoke_and_ack`
+back.
+- The HTLC is promoted to `Committed` state, we do not store any
+  information along with it.
+- The HTLC is added to `monitor_pending_update_adds`
+- We notify that we need to persist after `handle_revoke_and_ack`
+- If we restart at this point, in the happy case we'll re-load the
+  `monitor_pending_update_adds`
+
+When we process our forwards, the `update_add_htlc` will be moved
+from `pending_update_adds` to the `ChannelManager`'s
+`decode_update_add_htlcs`:
+- This contains the full `update_add_htlc`, so the accountable siganl
+  will be persisted
+- These are written and read for `ChannelManager` on restart 
+
+### ln: add incoming_accountable to PendingHTLCInfo
+
+Persistence?
+- Written as an optional field, so we're backwards/forwards compat
+Q: should this be field 1?
+
+Restarts?
+When we `process_pending_update_add_htlcs`, we pull the HTLCs out of
+`decode_update_add_htlcs` and process them and add to `ChannelManager`'s
+`forward_htlcs`.
+- `get_pending_htlc_info`: creates `PendingHTLCInfo` from the
+  `update_add_htlc` (this calls into `create_recv_pending_htlc_info` and
+  `create_pending_htlc_info`, where we set accountable).
+- We have added an `incoming_accountable` to `PendingHTLCInfo`, which
+  is written as part of the struct.
+- `forward_htlcs`: are read and written with the `ChannelManager`, so
+  the signal will be remembered.
+
+### ln: add accountable signal to HTLCUpdateAwaitingAck::AddHTLC
+
+Persistence?
+- We manually read/write `accountable` field like we do for other
+  additional information in channel.
+
+Restarts?
+- When we `queue_add_htlc` (removing from `forward_htlcs`), we push
+  to `holding_cell_htlc_updates`
+
+When we pull the HTLC out of `forward_htlcs` we'll `queue_add_htlc`
+which pushes the htlc into `holding_cell_updates`:
+- `HTLCUpdateAwaitingAck::AddHTLC` has an accountable signal added
+  (this is where we'd set the value we've picked for our outgoing link)
+- We read and write the `holding_cell_htlc_updates` when we go up and
+  down.
+
+## ln: add accountable signal to OutboundHTLCOutput
+
+Persistence?
+- We read/write `pending_outbound_htlcs` with our channel, using custom
+  serialization.
+
+Restarts?
+When we free our holding cells, the HTLC is pushed into
+`pending_outbound_htlcs` as a `OutboundHTLCOutput`:
+- We store the accountable value with our outbound htlc, regardless of
+  the state that it's in.
+- We're always able to form the outgoing `update_add_htlc` from these
+  fields.
+
+Things to investigate:
+- What is the channel dropping issue mentioned as a TODO in
+  `monitor_pending_update_adds`
+
+Q: Do we remember whether an incoming HTLC was accountable once we move
+   it to `Committed`? Seems like we lose some of the information
+  - That's ok, we don't need it

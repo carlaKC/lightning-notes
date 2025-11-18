@@ -263,3 +263,15 @@ What needs to change?
 
 Done - managed to combine tests into make a single test that covers
 both blinded and unblinded.
+
+## Forwarding Trampoline
+
+What's already been done?
+- Packet assembly from path
+- Calculate onion length dynamically
+
+To be done:
+- Support forwarding as a trampoline payment to the next trampoline hop 
+- Support MPP aggregating at intermediate hops
+- Shorten CLTV (ensure it's relative)
+- Support retrying a trampoline payment as an intermediate node

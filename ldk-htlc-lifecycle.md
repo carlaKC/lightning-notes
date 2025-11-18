@@ -388,7 +388,7 @@ Channel Manager:
         - `send_htlc(force_holding_cell = true)`:
           - Checks that we can add htlcs to the outgoing channel,
             balance availability and that the peer is online
-          - Push a `HTLCUpdateAwaitingACK::AddHTLC` to `holding_cell_updates`
+          - Push a `HTLCUpdateAwaitingACK::AddHTLC` to `holding_cell_htlc_updates`
 ```
 Channel Manager:
   forward_htlcs: []
