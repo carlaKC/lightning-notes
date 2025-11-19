@@ -275,3 +275,73 @@ To be done:
 - Support MPP aggregating at intermediate hops
 - Shorten CLTV (ensure it's relative)
 - Support retrying a trampoline payment as an intermediate node
+
+### 3976
+
+This PR has all of Arik's original work with comments addressed (by
+Maurice).
+
+#### Create TrampolineForward HTLCSource Variant
+
+We need to store more information for trampoline:
+- The new session key that we're using for the route
+- The IDs of previous HTLCs (now, we could have multiple htlcs arrive
+  on our incoming link that we have to be responsible for settle/failing
+  when we resolve on our outgoing link).
+- `HTLCSource`: this enum is where we store additional info (eg if it's
+  a forward vs our own payment).
+  - This is tracked in `OutboundHTLCOutput`, which is where we keep all
+    our info about our channel's outgoing htlcs (in
+    `pending_outbound_htlcs`)
+  - Written/read in channel (the oldschool way)
+
+Use of this field:
+- `fail_htlc_backwards_internal`:
+  - Fail back each of the incoming htlcs when the outgoing fails
+  - TODO: we get a failure back for our chosen onion route, but don't
+    yet use it (because the sender doesn't care about our failed route).
+
+We have two helpers here:
+- `get_htlc_failure_from_blinded_failure_forward`:
+  - Does blinded path voodoo if required
+- `fail_htlc_backwards_from_forward`:
+  - Puts failure in forward_htcs
+  - Omits `HTLCHandlingFailed` event
+
+- `claim_funds_internal`:
+  - Success case where we claim our outgoing
+  - Just do it for all of our trampoline htlcs
+
+Another helper:
+- `claim_funds_from_hop_internal`:
+  - Does the "from hop claim" stuff that's common to regular and tramp
+
+#### Expand HTLCDestination variants for Trampoline Forwards
+
+- Just adds a variant to the API to notify trampoline failure
+
+#### Find path and route to the next Trampoline node
+
+- Add a `payment_id` to `TrampolineForward` to be able to track the
+  status of our outgoing payment.
+- Add an argument for `trampoline_forward_info` to `SendAlongPathArgs`
+  so that we can include trampoline payloads.
+- In `send_payment_along_path`:
+  - Construct onion with trampoline payload if we have one
+  - Create our `htlc_source` with appropriate trampoline info
+  - TODO: resume on 6385
+
+#### Thoughts
+
+Q: What about all the fussy "we have two commitments" stuff?
+- [ ] The following helper functions can be prefactored
+  - `get_htlc_failure_from_blinded_failure_forward`
+  - `fail_htlc_backwards_from_forward`
+  - `claim_funds_from_hop_internal`
+- Generally, the one massive claim function is hell and could use some
+  cleanup
+Q: Are we going to support multi-part outgoing?
+
+I think this should be broken up into:
+- Add trampoline `HTLCSource` and the prefactors that come with it
+- Add routing of new payments
