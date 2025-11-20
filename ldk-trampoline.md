@@ -329,7 +329,45 @@ Another helper:
 - In `send_payment_along_path`:
   - Construct onion with trampoline payload if we have one
   - Create our `htlc_source` with appropriate trampoline info
-  - TODO: resume on 6385
+  - `send_htlc_and_commit` to dispatch
+
+`process_pending_update_add_htlcs`:
+- Loops through all the `decode_update_add_htlcs`
+- Decodes the outgoing packet
+- `can_accept_incoming_htlc`: checks forwarding concerns
+- For payloads that have an `outgoing_connector`:
+  - `can_forward_htlc`: checks outgoing link's conditions for fwds
+  - Trampoline: we don't know outgoing link, so don't check
+- We push into `htlc_forwards`
+
+`process_receive_htlcs`:
+- This will be hit in `internal_process_pending_htlc_forwards`
+  if we don't have an outgoing channel id (which is the case for tramp)
+- Match to a trampoline value:
+  - Create a `HTLCSource` that's a trampoline forward
+  - Perform blinding ops + setup route parameters
+  - `pending_outbound_payments.send_payment_for_trampoline_forward` 
+
+`fail_htlc_backwards_internal`:
+- `should_fail_back` = `pending_outbound_payments.trampoline_htlc_failed`
+- If `should_fail_back`:
+  - Fail each htlc back like we did before
+
+`pending_outbound_payments.send_payment_for_trampoline_forward`:
+- Finds a route for the onion payment
+- `add_new_pending_payment` 
+- `pay_route_internal`
+- `handle_pay_route_err`
+
+`trampoline_htlc_failed`:
+- Decode the onion failure received
+- Allow another shot if it's still retryable and we don't have
+  the full amount in flight and it is a retryable payment
+
+`create_trampoline_forward_onion`:
+- Creates a `RecipientOnionFields::spontaneous_empty()`
+- Builds onion payloads, adds onion payload
+- Construct full onion packet
 
 #### Thoughts
 
@@ -341,6 +379,12 @@ Q: What about all the fussy "we have two commitments" stuff?
 - Generally, the one massive claim function is hell and could use some
   cleanup
 Q: Are we going to support multi-part outgoing?
+Q: `new_trampoline_entry` has a blinding point added, but we never
+  pass one in in `build_onion_payloads_callback`
+Q: What's the blocking situation here?
+Q: What happens if we have two trampoline payments with the same hash?
+Q: Can the trampoline retry logic be de-duplicated?
+Q: Is the `unreachable` in `create_trampoline_forward_onion` ok? 
 
 I think this should be broken up into:
 - Add trampoline `HTLCSource` and the prefactors that come with it
