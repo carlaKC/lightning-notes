@@ -38,8 +38,31 @@ We could add to `CircuitMap`:
 What if we had a reputation tracker that caches the full cost of each
 of the incoming htlcs by `CircuitKey`
 
-Q: what about restarts?
+TODO: reputation isn't decaying average
 
-Notes:
-- Have a struct that gets passed in
-- I don't think we need to store incoming expiry height (just blocks held?)
+## Restarts
+
+When we restart we will need to know:
+- Channel Revenue (start_time / avg { value, last_updated})
+- Outgoing reputation (avg { value, last_updated })
+- Extra in flight data {added_at, added_height}
+
+Q: where can we re-load HTLC info
+- We create a new manager in server.go, where we call switch.New
+- If we use the combination of the circuit map (new `ListCircuits`
+  call) and `FetchAllOpenChannels`), we should have all of the htlcs
+  info that we need:
+  - Incoming/Outgoing link: circuit map
+  - Fee: circuit map (incoming/outgoing)
+  - Incoming Expiry: incoming channel's `HTLC`
+  - Accountable: outgoing channel's `HTLC`
+- We can reload as follows:
+  - Pull all circuits that have outgoing circuits
+  - Pull all channels, add htlc info from channel
+
+- Things that won't be available to us:
+  - Time htlc was added: would need to add this to payment circuit
+  - Height htlc was added: accept some loss here (just calc from addedTs)
+
+-> It would be nice if a timestamp was available to use somewhere else
+   in the codebase, perhaps added for attributable failures?
