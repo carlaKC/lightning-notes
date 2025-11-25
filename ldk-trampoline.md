@@ -389,3 +389,8 @@ Q: Is the `unreachable` in `create_trampoline_forward_onion` ok?
 I think this should be broken up into:
 - Add trampoline `HTLCSource` and the prefactors that come with it
 - Add routing of new payments
+
+Maurice already had us most of the way for the refactors (ITO splitting
+it up and breaking into functions).
+
+Q: What do we need `hops` for in `HTLCSource::TrampolineForward`?
