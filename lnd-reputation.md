@@ -66,3 +66,25 @@ Q: where can we re-load HTLC info
 
 -> It would be nice if a timestamp was available to use somewhere else
    in the codebase, perhaps added for attributable failures?
+It's added in `ErrorEncryptor`, which is kind of a strange spot to have
+it. We probably want to add it somewhere else that's more general purpose.
+
+Steps for restart:
+- [x] Move circuit map creation outside of switch
+- [x] Add implementation to circuitmap to provide current circuits
+  [ ] Possibly change this back to pointers because we're going to
+     just copy at the caller base anyway.
+- [ ] Provide circuitmap list to reputation manager + `FetchAllOpenChannels`,
+  and reconcile information to build reputation
+
+Next up!
+- We'll need to store timestamps on htlcs somewhere to be able to
+  restore
+
+Q: Can we have this on a per-commitment level?
+- No, because HTLCs can be added a few commitments back so we're going
+  run into some nasties trying to figure out when.
+
+Q: Is it appropriate to store timestamps by HTLC in `channel`?
+- With the HTLC _might_ be the idea, but the persistence of htlcs is
+  a fucking disaster.
