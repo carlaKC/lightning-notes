@@ -551,3 +551,21 @@ Things to investigate:
 Q: Do we remember whether an incoming HTLC was accountable once we move
    it to `Committed`? Seems like we lose some of the information
   - That's ok, we don't need it
+
+## Review Round
+
+Should we move the option strictly into our msgs?
+
+- We have to have `Option` for `PendingHTLCInfo` to be able to use
+  our persistence macros.
+- If we update the helper to return a bool, then we end up needing to
+  wrap the value in `Some` anyway
+- I have tried this out here, but slightly prefer how it is because
+  we can distinguish between not present and false
+-> Leo addressed persistence concern, I think defaulting to false 
+   seems to be the way to go.
+
+Add test coverage for recipient?
+- Not surfaced in `PaymentClaimable`
+- A next best option is to look into the incoming node's `forward_htlcs`
+  before it, can pull the HTLC out here
