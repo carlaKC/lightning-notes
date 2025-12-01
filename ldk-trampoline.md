@@ -394,3 +394,108 @@ Maurice already had us most of the way for the refactors (ITO splitting
 it up and breaking into functions).
 
 Q: What do we need `hops` for in `HTLCSource::TrampolineForward`?
+
+## PR Runthrough
+
+Going through PR once over before opening up.
+
+### add blinded forwarding failure helper function
+
+get_htlc_failure_from_blinded_failure_forward:
+- Takes a blinded failure which indicates whether we're in a blinded
+  route (or not)
+- The original `onion_error` which has our local failure
+- Various shared secrets that we may need to use for error wrapping
+- The HTLC ID that we're failing
+
+### move forward fail back to fail_htlc_backwards_from_forward
+
+fail_htlc_backwards_from_forward:
+- Takes an `onion_error`, `failure_type` and `prev_channel_id` to
+  report in the `HTLCHandlingFailed` event that's omitted
+- The `short_channel_id` is the ID that we actually push to
+  `forward_htlcs`, and the `failure` is the action that we're taking.
+
+Pulling this out because we'll need to call it multiple times for
+trampolines with multiple incoming HTLCs.
+
+### move funds claim for forward into helper
+
+claim_funds_from_hop_htlc_forward:
+- Gets the monitor action we'll need when done
+- Processes attribution data
+- Calls `claim_funds_from_hop` with a big ole closure (`completion_action`)
+  - `claim_funds_from_hop` -> `claim_mpp_part`
+
+Questions here:
+- Is it okay to have one event per incoming hltc for a single outgoing?
+- How are we going to "split" our fees for one in / one out
+
+### extract channelmonitor recover to external helper
+
+- When we read the channelmanager from disk, we have to reconcile our
+  view with the ChannelMonitor, because they aren't persisted in the
+  same db transaction.
+
+### add TrampolineForward variant to HTLCSource enum
+
+- channelmonitor:
+  - `get_htlc_balance`: return false for trampoline because it's not
+    our payment.
+  - `get_claimable_balance`: likewise, return false for trampoline
+    because it is not our payment
+- channelmanager:
+  - We add the `HTLCSource` variant for trampoline storing the info
+    we need to be able to resolve these.
+  - We implement hash for this in a similar way to `OutboundRoute`
+    (which does include the path)
+  - Implement read and write for the variant (in legacy way):
+    - read: 2 / hop data, secret, priv, hops 
+    - write: 2 / hop data, secret, priv, hops
+  - We add `todo!()` in a few places where we need to add handling which
+    we will fill in in later commits:
+    - [ ] ChannelManager / `SendHTLCId::from_source`
+    - [x] ChannelManager / `fail_htlc_backwards_internal`
+    - [x] ChannelManager / `claim_funds_internal`
+    - [x] ChannelManager / read
+
+Questions:
+- Why do we need to store `hops` here? Check in the final boss PR.
+- Why aren't we storing the full `Path` like we do for `OutboundRoute`?
+  - We don't actually have it?
+
+### add trampoline routing failure handling
+
+- When we call `fail_htlc_backwards_internal`, add handling for
+  trampoline htlcs, canceling
+
+Question:
+- Where is this called and are we going to call it in the right
+  place for trampoline? (ie, could we accidentally do this when we're
+  still waiting on an outbound to succeed??)
+- How do we report this paymnt back to "mission control"?
+
+### add trampoline routing payment claiming
+
+- Claims funds for each incoming htlc
+
+Q: What about splitting fees here? It's wrong! Need to take another look
+   here.
+
+### add channel monitor recovery for trampoline forwards
+
+- Does the reconcile for each hop, we do this per-outgoing htlc so
+  when we're sending payments so I think it's fine to do it one by
+  one?
+
+## Things to Do Tomorrow
+
+- How do we implement `SendHTLCId` for trampoline
+- Do we want a single event for claiming all trampoline inbound htlcs?
+- Need to fix up fee splitting issue
+- Why do we need to store hops (and why not path) for tramopline?
+  -> Look at the remaining PR to see how we use it
+- How do we report the outcome of the trampoline forward to our
+  "mission control" once we have it.
+- Check how we're calling `fail_htlc_internal` for trampoline, looking
+  at the downstream PR.
