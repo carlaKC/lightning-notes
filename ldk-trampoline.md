@@ -488,9 +488,66 @@ Q: What about splitting fees here? It's wrong! Need to take another look
   when we're sending payments so I think it's fine to do it one by
   one?
 
-## Things to Do Tomorrow
+## Outstanding Implementation Questions
 
-- How do we implement `SendHTLCId` for trampoline
+### How do we implement `SendHTLCId` for trampoline?
+  - The remaining PR includes both a `session_priv` and
+    `previous_hop_ids` in a `TrampolineForward` variant of `SendHTLCId`
+  - We don't appear to use the hops anywhere in the downstream PR, and
+    it's wasteful to include all the hops
+  - For `OutboundRoute` we just use the `session_priv`
+  - For `PreviousHopData` we include the `PreviousHopData`
+
+Where do we use `SendHTLCId`?
+- `update_holder_commitment_data(claimed_htlcs)`:
+  - `counterparty_fulfilled_htlcs`:
+    - insert id/preimage
+    - used to re-populate outbound htlcs in channel manager on restart
+-> So far as I can tell, this is just used as a unique identifier in
+   a preimage map so we don't need all hops.
+
+- `provide_secret`:
+  - Prunes any preimages that we no longer need because they aren't
+    in any of our commits.
+  - In the MPP case, we want to have distinct IDs here so that we don't
+    settle one outgoing HTLC and then forget about the preimage for
+    the other. Only our downstream can settle back off chain anyway,
+    so it doesn't matter if we know the preimage (except for onchain).
+
+- `commitment_signed_update_monitor`
+  - We add the `SendHTLCId` to `claimed_htlcs` which is pushed into
+    either
+    - `LatestHolderCommitment`:
+      - `update_holder_commitment_data`
+    - `LatestHolderCommitmentTxInfo`
+      - `provide_latest_holder_commitment_tx`
+        - `update_holder_commitment_data`
+
+Q: What happens with MPP payments? Would we add multiple here?
+- `get_all_current_outbound_htlcs` goes through all of our
+  `counterparty_claimable_outpoints` which has `HTLCSource` stored in
+  it. We then create a `htlc_id` from that `HTLCSource` and populate
+  the preimage.
+  - If we had multiple outgoing htlcs, they'll be uniquely identified
+    by their `session_priv`
+  - If we did this by prev scid/id, we'd be overwriting them?
+
+Q: Where do we create a `HTLCSource::TrampolineForward`?
+- `send_payment_along_path`:
+  - `send_htlc_and_commit`:
+    - `send_htlc`:
+      - Pushes into `OutboundHTLCOutput` where it will be persisted
+-> We set params to allow MPP payments, and `pay_route_internal` will
+  dispatch them if we need it.
+
+TL;DR:
+- I think that it's okay to just use the session key for
+  `TrampolineForward`'s `HTLCSentId` (the worst case is that we will
+  duplicate some preimage information).
+- For multiple outbound htlcs, we'll add one `TrampolineForward` per
+  outbound htlc; they'll all have their own unique `session_priv` but
+  will duplicate the previous outgoing hops that they list.
+
 - Do we want a single event for claiming all trampoline inbound htlcs?
 - Need to fix up fee splitting issue
 - Why do we need to store hops (and why not path) for tramopline?
