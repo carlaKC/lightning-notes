@@ -548,11 +548,61 @@ TL;DR:
   outbound htlc; they'll all have their own unique `session_priv` but
   will duplicate the previous outgoing hops that they list.
 
-- Do we want a single event for claiming all trampoline inbound htlcs?
-- Need to fix up fee splitting issue
+### Do we want a single event for claiming all trampoline inbound htlcs?
+
+- A `PaymentForwarded` even is generated when a payment has been
+  successfully forwarded through and a fee is earned.
+
+For trampoline: when we have multiple outgoing HTLCs, we'll omit one `PaymentForwarded` event per incoming htlc that we settle back. Are we happy to:
+1) Have multiple events for a single trampoline forward? This makes sense to me because the event references the previous channel.
+2) Assign the whole fee earned to the first event, and have the following ones be zero fee. This is the simplest way of doing it (splitting between events is possible, but could have annoying rounding issues)
+.
+
+Q: I need to look at where we're calling `claim_funds_internal` to
+figure out where we're calling this from for trampoline (I'm not so
+sure what the `next_channel` stuff will be because we can have different
+next channels.
+- When we get an `update_fulfill_htlc` we'll call `claim_funds_internal`:
+  - On the first claim, we'll claim all of the incoming HTLCs and omit
+    a `PaymentForwarded` event
+  - On the second claim:
+    - `claim_funds_from_hop`
+      - Same `hop_data` as previously
+      - Possibly different 
+
+Q: Why does `claim_funds_internal` have `forwarded_htlc_value_msat`
+  as an option?
+- We alwayas set `Some` in all call sites, and it has been like this
+  since we added the param.
+
+Asked Matt:
+- We should change the event
+- Only thing that matters is serialization compat (should be easy to
+  go from one thing to a vec)
+- Could also do a new event type, not fussy: main thing that matters
+  is clearly communicating what happened. 
+
+Action:
+- Need to change refactor of claim to take multiple HTLCs + migrate
+  `PaymentForwarded`; this also fixes the splitting issue
+- Need to check what would happen with failures (probably same thing?) 
+  Maybe a bit weird with trampoline retries
+
+Q: if things are only `None` for versions < 0.1, is it safe for me to
+   migrate them away from being `Option`? Specifically:
+- 0.0.107 - June 2022
+- 0.0.112 - April 2024
+- 0.1 - Jan 15
+
+## Remaining Questions
+
+- Need to check what events look like for the failure side? Do they
+  map well?
 - Why do we need to store hops (and why not path) for tramopline?
   -> Look at the remaining PR to see how we use it
 - How do we report the outcome of the trampoline forward to our
   "mission control" once we have it.
 - Check how we're calling `fail_htlc_internal` for trampoline, looking
   at the downstream PR.
+- Should probably also look at the different commitments thing to make
+  sure we always forward back everything we're expecting to
