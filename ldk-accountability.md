@@ -569,3 +569,25 @@ Add test coverage for recipient?
 - Not surfaced in `PaymentClaimable`
 - A next best option is to look into the incoming node's `forward_htlcs`
   before it, can pull the HTLC out here
+
+### Encoding Question
+
+Main issue is mapping from u8 to bool - we don't want to do this
+outside of `msgs` (it's bringing serialization concerns into the main
+codebase). Matt suggested adding custom encoding to the macro, so that
+we don't have to totally break out of the serialization macro (the
+alternative is just writing the full impl out).
+
+My suggestion:
+- Add custom encoding, going straight to a bool from u8 inside of msgs
+- There isn't currently macro support for setting this to required,
+  but I think that's okay (it has to be an option on the wire).
+  - Setting this to `false` by default actually isn't the wire `msgs`
+    business really anyway, it's more of a logical decision that we
+    make in our handling.
+
+So:
+- Use custom encoding inside of the macro
+- Be okay with the option on the wire (it's actually nice to know
+  whether the field was set or not).
+- Leave everything else as-is, accepting the occasional unwrap-or.
