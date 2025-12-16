@@ -582,17 +582,70 @@ Asked Matt:
 - Could also do a new event type, not fussy: main thing that matters
   is clearly communicating what happened. 
 
-Action:
-- Need to change refactor of claim to take multiple HTLCs + migrate
-  `PaymentForwarded`; this also fixes the splitting issue
-- Need to check what would happen with failures (probably same thing?) 
-  Maybe a bit weird with trampoline retries
-
 Q: if things are only `None` for versions < 0.1, is it safe for me to
    migrate them away from being `Option`? Specifically:
 - 0.0.107 - June 2022
 - 0.0.112 - April 2024
 - 0.1 - Jan 15
+
+A: We already have a caveat that we can't directly upgrade from some
+   versions with pending HTLCs, so in that case it's okay but otherwise
+   we still want to respect it.
+
+Action:
+- Need to change refactor of claim to take multiple HTLCs + migrate
+  `PaymentForwarded`; this also fixes the splitting issue.
+- This gets a bit tricky, because it's really geared towards a single
+  channel.
+
+`claim_funds_from_hop`:
+- Creates a `HTLCClaimSource` from `prev_hop`
+  - We need one of these per incoming htlc!
+- `claim_mpp_part`:
+  - Accepts a completion function which optionally returns a
+    `MonitorUpdateCompletionAction`
+  - Lock the incoming `per_peer_state` + lookup channel
+  - `update_fulfill_htlc_and_commit` creates claim + commitment
+  - If `NewClaim`:
+    - Get the action from `completion_action` + push to actions
+    - `handle_new_monitor_update` will process action
+  
+
+Q: Can we call `claim_funds_from_hop` and then omit a single event?
+   Possibly _outside_ of the `claim_funds_from_hop` logic.
+  - We only call this in two places `claim_payment_internal` and
+    `claim_funds_from_hop_htlc_forward`.
+
+Q: How do we set `definitely_duplicate` when we call our closure?
+- `get_update_fulfill_htlc_and_commit`:
+  - `get_update_fulfill_htlc`:
+    - If the `pending_inbound_htlcs` is already `LocalRemoved`, it'll
+      be counted as `DuplicateClaim`
+      - Each trampoline claim will be new, so we'll omit an event for
+        each
+
+We're also going to call `claim_funds_internal` for _each_ incoming
+HTLC, but we'll hit `DuplicateClaim` on the incoming htlcs and only
+omit one event (because we've already claimed the outgoing ones).
+
+SO! I think that having a single event that tells us all of the htlcs
+that are involved with trampoline is _fine_. *But* right now we'll omit
+one per incoming HTLC, which isn't very easy to understand (?).
+
+Things we can deprecate option on (<0.0.123)
+- prev_channel_id: 0.0.107
+- next_channel_id: 0.0.107
+- prev_user_channel_id: 0.0.122
+- next_user_channel_id: none if the payment was settled via onchain
+
+- prev_node_id: 0.1
+- next_node_id: 0.1
+
+What else do we need?
+- `incoming_packet_shared_secret`
+- `RAAMonitorBlockingAction::from_prev_hop_data`
+- `hop_data.outpoint` 
+- `hop_data.prev_outbound_scid_alias`
 
 ## Remaining Questions
 
