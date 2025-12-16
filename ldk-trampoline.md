@@ -641,11 +641,39 @@ Things we can deprecate option on (<0.0.123)
 - prev_node_id: 0.1
 - next_node_id: 0.1
 
-What else do we need?
-- `incoming_packet_shared_secret`
-- `RAAMonitorBlockingAction::from_prev_hop_data`
-- `hop_data.outpoint` 
-- `hop_data.prev_outbound_scid_alias`
+Omitting only one event:
+- `EmitEventAndFreeOtherChannel`:
+  - `event` field has the `PaymentForwarded`
+  - This is pushed in `handle_new_monitor_update_completion_actions` 
+  - We then `handle_monitor_update_release` *if* we have a
+    `downstream_counterparty_and_funding_outpoint` (we do set this
+    in our event).
+- This looks _pretty identical_ to `FeeOtherChannelImmediately`, except
+  that we don't persist this option, so I'm worried about something
+  getting lost?
+-> Rather make the event optional and handle it accordingly
+
+Fees question: we could have multiple htlcs spread across multiple
+incoming channels.
+- Just have to bite the bullet and grab lock on each channel quickly
+  to read the fee amount (total in - total out). We only use the
+  claimed amount for fowards _anyway_ so it's not too bad to change.
+- We're always going to hit this issue because we're in a possible
+  multi-channel setting (there's no refactor of claim that would fix
+  this).
+
+Q: What about only on duplicate preimage?
+- This would murk things up for MPP a bit? Yes, we lose an event
+
+Q: Does this change the need for a different event type?
+- No, we still need to be able to provide a signal that we're not
+  going to omit an event and that has to live in the
+  `MonitorUpdateCompletionAction`
+
+Steps:
+- Make event optional
+- Add lookup for HTLC amount
+- Remove the claimed amt from completed_action
 
 ## Remaining Questions
 
