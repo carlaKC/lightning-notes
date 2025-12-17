@@ -671,9 +671,38 @@ Q: Does this change the need for a different event type?
   `MonitorUpdateCompletionAction`
 
 Steps:
-- Make event optional
+- [x] Make event optional
 - Add lookup for HTLC amount
 - Remove the claimed amt from completed_action
+
+Q: What about multiple outgoing payments?
+- We will call `send_htlc_and_commit`, which adds each of our outgoing
+  payments.
+- We will separately `update_fulfill_htlc` on each one that gets settled
+  back to us (which will eventually hit `claim_funds_internal`)
+- Each of these pending outbound htlcs will *only* store their outgoing
+  route (as stored in `send_htlc_and_commit`; they don't know about
+  each other!
+
+So, for trampoline payment we need to scan our outgoing channels for
+any matching outgoing htlcs that have the same payment id as us?
+
+-> We actually can't do fees properly here, we're going to have to
+  do that when we have trampoline payments tracked in
+  `pending_outbound_payments`. That's our one source of truth for the
+  outgoing payment amounts that we have. For incoming htlcs, we'll have
+  to look them up as we go.
+
+Preparing for fees:
+- `claim_funds_internal` -> `claim_funds_from_hop_htlc_forward`
+
+`claim_funds_internal` is given a `forwarded_htlc_value_msat`
+-> we can remove this for a lookup!
+-> We get the `HTLCSource` where we can get our incoming htlc
+
+Refactor claim_funds_from_hop_htlc_forward to pass in the event
+we need, this includes the fee. For trampoline, we'll only need some
+event once!
 
 ## Remaining Questions
 
@@ -687,3 +716,43 @@ Steps:
   at the downstream PR.
 - Should probably also look at the different commitments thing to make
   sure we always forward back everything we're expecting to
+
+## PR Writeup (draft)
+
+Some of these changes are quite mechanical, but the ones around `PaymentForwarded` events and htlc claims bear some considering - especially for multi-in, multi-out payments.
+
+```
+A --->
+                      ---> D ---> ...
+B ---> Trampoline node
+                      ---> E ---> ...
+C --->
+```
+
+When we're fully implemented we will have the following tracked:
+
+```
+Channel D's pending_outbound_htlcs:
+Source: A/B/C
+Route: D -> ...
+```
+
+```
+Channel E's pending_outbound_htlcs:
+Source: A/B/C
+Route: E -> ...
+```
+
+When we settle these back, we'll have one resolution flow when `D` is fulfilled and one when `E` is fulfilled. Here we want:
+- A single `PaymentForwarded` event
+- A correct view of the fees that we have earned.
+
+To be able to do this, we need to know about the total amount of our outgoing HTLCs (to report them in the event, and to calculate fees).
+While the outbound htlcs will have knowledge of their shared *source*, they don't have knowledge of each other (D doesn't know there's a HTLC on E, and vice versa).
+One approach would be to make them aware of each other, but this gets pretty messy when we allow retires as we'd need to update our `HTLCSource` on each channel if a new HTLC is dispatched.
+
+`OutboundPayments` is a good source of truth because it knows about all of our outbound payments.
+Our `HTLCSource` stores the trampoline's unique `payment_id`, so we're able to look up our currently outbound amounts on each channel.
+We also need to know *all* of our inbound HTLC amounts (not the one that's currently being fulfilled), so we'll need to do lookups on the incoming channel as well (we have all the information we'll need on hand in `HTLCSource`).
+
+Finally, we need to omit a *single* event. But we still want to do all our other resolving
