@@ -704,6 +704,17 @@ Refactor claim_funds_from_hop_htlc_forward to pass in the event
 we need, this includes the fee. For trampoline, we'll only need some
 event once!
 
+Places where we have to calculate our fee:
+- `internal_update_fulfill_htlc`: we have all the information we need
+  available (incl `HTLCSource`)
+- `process_pending_monitor_events`: ?? 
+- Read channel manager args:
+
+All of these call sites provide `Some` forwarding value which means
+that they do list fees.
+- For now just passing in a bool, ask on opinions here because I can't
+  get a nice way to do it.
+
 ## Remaining Questions
 
 - Need to check what events look like for the failure side? Do they
@@ -756,3 +767,37 @@ Our `HTLCSource` stores the trampoline's unique `payment_id`, so we're able to l
 We also need to know *all* of our inbound HTLC amounts (not the one that's currently being fulfilled), so we'll need to do lookups on the incoming channel as well (we have all the information we'll need on hand in `HTLCSource`).
 
 Finally, we need to omit a *single* event. But we still want to do all our other resolving
+
+Questions for Val:
+- I want to make something optional that previously wasn't, this will
+  never be backwards compatible
+  - Add another event type instead (?)
+- Look at all my TODOs in the code and clean them up
+
+The alternative is to *know* that we shouldn't omit the event (?)
+- We pass a closure into `claim_funds_from_hop` which provides the
+  event.
+- Current approach is to return *Some* here
+- Can we change the definition of `definitely_duplicate`?
+  - We get a `DuplicateClaim` from `update_fulfill_htlc_and_commit` on
+    the previous channel
+  - This calls `get_update_fulfill_htlc`, which checks the state of
+    the incoming htlc
+  - For trampoline, we will recognize that the second fulfill that we
+    get is a duplicate.
+  - Q: do we have the context available in this logic to understand that
+    we're in a trampoline payment?
+    - This doesn't work because we still need to do the real processing
+      of the claim for the next incoming trampoline event, we just
+      don't want the event at the end of it.
+
+Decision: leave fee calculation in the next PR, and just make a note
+that it's going to be wrong in this one. Need to pass in a closure that
+will create the event, accepting the total amount as a param (needed
+for regular operation).
+
+Running into failing test w/ serialization:
+- The issue is that our next_channel_id_legacy and
+  prev_channel_id_legacy aren't being set in the tests?
+  - prev_channel_id_legacy -> fails
+  - [ ] next_channel_id_legacy
