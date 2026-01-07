@@ -768,11 +768,13 @@ We also need to know *all* of our inbound HTLC amounts (not the one that's curre
 
 Finally, we need to omit a *single* event. But we still want to do all our other resolving
 
+## Cleanup Runthrough
+
 Questions for Val:
-- I want to make something optional that previously wasn't, this will
+- [ ] Explain approach for fees / events and why we need it this way
+- [ ] I want to make something optional that previously wasn't, this will
   never be backwards compatible
-  - Add another event type instead (?)
-- Look at all my TODOs in the code and clean them up
+  - Could add another event type instead (?)
 
 The alternative is to *know* that we shouldn't omit the event (?)
 - We pass a closure into `claim_funds_from_hop` which provides the
@@ -801,3 +803,91 @@ Running into failing test w/ serialization:
   prev_channel_id_legacy aren't being set in the tests?
   - prev_channel_id_legacy -> fails
   - [ ] next_channel_id_legacy
+-> Unwrap or is "eager" and was running the "or" block even when not None
+
+### Refactor
+
+Pass closure that will provide event to `claim_funds_from_forward_hop`.
+- This will be called in `claim_funds_internal`, which is where we know
+  whether we need an event or not.
+  - In future we'll have our fee information in 
+    `self.pending_outbound_payments` (which is look-up-able in
+    `claim_funds_internal`)
+- The existing closure is the authority on the type of event that we
+  need to omit, moving that up doesn't make sense, just create a PF
+  event closure.
+
+
+### Failures
+
+Take our multi-in, multi-out case:
+A --
+          -- D
+B -- (us)
+          -- E
+C --
+
+`fail_htlc_backwards_internal` is used to propagate the failure back.
+- In the followup PR, we'll have a trampoline-level check that will
+  only fail the HTLC backwards if we want to (ie, we've given up on
+  trying the outgoing trampoline route).
+
+Failure process:
+- We receive an `update_fail_htlc` for a single outgoing htlc
+- We update the outgoing htlc to be in state `RemoteRemoved`, then
+  go through the commitment cycle until it has been fully removed.
+- We call `monitor_updating_paused` with it in `revoked_htlcs`, which
+  sets them in `monitor_pending_failures`
+- When the monitor updating is restored, we drop these in
+  `MonitorRestoreUpates`'s `failed_htlcs`, which are then piped into
+  `fail_htlc_backwards_internal` in `handle_monitor_update_completion`
+
+This means that like with our claims (naturally), we'll get one event
+for D and one for E. They will be of type
+`HTLCHandlingFailureType::Forward` and we will push one failure per
+outgoing HTLC that we have.
+
+- We have higher level control over the events that we push in
+`fail_htlc_backwards_from_forward` (we could add a new type and only
+omit one event).
+- We push a `HTLCForwardInfo` into `forward_htlcs` for each of our
+  outgoing htlc that was failed back.
+
+Q: what does the current PR do in terms of duplicate events?
+- We will push one event per incoming HTLC that we fail back (a htlc
+  handling failed event)
+
+Changes:
+- We can add a new `HTLCHandlingFailed` type, which we will use to
+  represent a trampoline's outgoing pmts
+  - This needs to be created at the *call site* for
+    `fail_htlc_backwards_internal`, which is okay because we always
+    have the source on hand (it's passed in too)
+- Probably also need to make `prev_channel_id` a vec?
+  - Doable!
+
+Q: what's going to happen when we have duplicate fail backs?
+- We rely on our `should_fail_backwards` logic to only fail back once
+  when all of our outbound htlcs have been cleared out. If we do this
+  plus some smart logic about omitting events then we are okay and will
+  only have one failure event.
+- I think that we can get rid of `fail_htlc_backwards_from_forward`
+  because it's really thin and it going to become even thinner when
+  we're deciding to pass an event in.
+
+Q; do we need our failure functions _if_ we're going to have a single
+   event?
+- Not really, changed to a closure.
+
+Q: can I wrap decoding in the legacy thing?
+- Not using this macro
+
+Q: Need to check how the trampoline "fail back" logic plays nice with
+    the regular close logic!
+    Eg: if we have a pending outgoing HTLC on D, and a locked in one
+    on E we need to make sure that we don't accidentally fail back our
+    incoming htlcs.
+- This should be fine, because our should fail function does most of
+  the hard work here. Whenever we go through the fail flow, we'll hit
+  this.
+
