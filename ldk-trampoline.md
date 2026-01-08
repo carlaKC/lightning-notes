@@ -891,3 +891,54 @@ Q: Need to check how the trampoline "fail back" logic plays nice with
   the hard work here. Whenever we go through the fail flow, we'll hit
   this.
 
+### PR Runthrough
+
+Going through branch once more before opening up draft. Also need to
+connect it to the remaining trampoline work, but will first do this
+quality runthrough to make sure I don't have an annoying rebase.
+
+#### ln/events: multiple htlcs in/out for trampoline PaymentForwarded
+
+Note: I couldn't figure out how to use default in the `read_tlv_fields`
+macro - is it supported but mucking me up.
+- I think that the `default_value` code is executing optimistically even
+  though we don't need it? Yup.
+- Updated to use default_value but it comes with some tradeoffs.
+
+#### ln+events: allow multiple prev_channel_id in HTLCHandlingFailed
+
+Same serialization logic, I'm not sure whether it is actually better
+to do all this weird stuff just for the sake of `default_value`.
+[ ] Need to make a call about serialization
+
+#### events: add TrampolineForward variant to HTLCHandlingFailureType
+
+Q: do I need `impl_for_vec` here? (check this generally)
+
+### ln/refactor: extract channelmonitor recovery to external helper
+
+[ ] Need to run through this commit properly!!
+
+### PR Notes
+
+-> Add below in comments
+A few implementation notes I'd like to flag to reviewers:
+* Serialization of prev/next HTLC vectors uses `required` so that
+  deserialization can use `default_value` to fill in legacy values
+  (see comments in commit for detail). We still have to do _some_ funny
+  business with `ChannelID::new_zero` so I'm not sure this is the best
+  approach. An alternative would be to just use `optional_vec` and fill
+  in the legacy values, it's just a few extra lines of code.
+* Backwards-incompatible change to `EmitEventAndFreeOtherChannel`: the
+  event associated with this `MonitorUpdateCompletionAction` is made
+  optional to only omit one event per trampoline payment when it has
+  multiple incoming HTLCs that need to be fulfilled. Older nodes won't
+  be able to read these actions because they expect the field to be
+  present. So far as I can tell, anything we do would be backwards
+  incompatible - for example, a new enum variant would need to have an
+  even TLV because the action must be understood to claim funds.
+* We don't yet have all the information we need for trampoline logic -
+  specifically (1) fee information for `PaymentForwarded` (2) context
+  to know when to fail incoming HTLCs back. Both of these will be added
+  in the next PR where we start tracking the state of our trampolines in
+  `pending_outgoing_payments`.
