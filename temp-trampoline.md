@@ -62,247 +62,141 @@ Q: would we ever pass in a `keysend_preimage` here?
 - When we receive the already built payload in a forwarding scenario,
   we have to cover both cases.
 
+Going back to look into the payload types we support, I don't love the
+claude suggestion for refactor here.
+
+The types of outer onions we receive `InboundOnionPayload`:
+- `Forward`: regular, no blinding
+- `TrampolineEntrypoint`:
+  - Could have `FinalOnionHopData` if if we've been MPP-ed to
+  - Contains an inner onion packet (which we unwrawp)
+  - `current_path_key`: we need to include this for the next node to
+    unwrap their trampoline onion
+  -> Basically, end of the outer onion time to do trampoline
+- `Receive`: regular receive
+- `BlindedForward`: blinded forwarding node gets routing info
+- `BlindedReceive`: blinded recipient gets receive info
+
+Types of inner trampoline onions we receive:
+- `Forward`: we've been given the next node id to forward to
+- `BlindedForward`: we're forwarding and get our routing info out of
+  an encrypted data blob.
+- `Receive`: we're the final recipient, but we looked like a trampoline
+  to the previous node.
+- `BlindedReceive`: we're the final recipient, and we got our recipient
+  information out of encrypted data.
+
+The types of ourter onions we create `OutboundOnionPayload`:
+- `Forward`: regular forwading hop
+- `TrampolineEntrypoint`: this is a trampoline and it gets the inner
+  onions in its payload.
+- `BlindedTrampolineEntrypoint`: this is a trampoline and it gets
+  inner onions in its payload, along with a blinding point to help
+  decrypt the inner onions.
+- `Receive`:  regular receive
+- `BlindedForward`: include encrypted tlvs for this node which has the
+  forwarding information that it needs.
+- `BlindedReceive`: was part of a blinded route, include final info 
+
+The types of inner onions we create: `OutbountTrampolinePayload`:
+- `Forward` + `Receive` regular fwd/recv inter-trampoline
+  - Note: we don't support receiving unblinded
+- `LegacyBlindedPathEntry`: end of trampoline, can send to blinded paths
+- `BlindedForward`: include encrypted tlvs for node to get fwd info
+- `BlindedReceive`: was part of a blinded route, include final info
+
+Going back to our problem:
+- `create_payment_onion_internal`:
+  - Will create trampoline onions _if_ we have them in a blinded tail
+  - Builds outer onion which will have these trampoline payloads in the
+    last hop.
+
+- `create_trampoline_forward_onion`:
+  - Builds outer onion with the trampoline onion packet, creating a
+    fake recipient onion for the final node
+  - Gets the last onion payload that we've just built, which is a
+    regular receive onion
+    - Replaces it with either a `TrampolineEntrypoint` or a
+      `BlindedTrampolineEntrypoint`
+
+Q: Why can't we have trampoline packets in our path for inter-trampoline?
+- We're picking a destination, and we don't have a blinded path from
+  them to pay to.
+- If we're a trapoline paying to a blinded path we have a
+  `LegacyBlindedPathEntry` which isn't dealt with as a forwad (?)
+
+Q: What are all the different case we need to handle?
+
+Sending:
+- Last trampoline is recipient:
+  - Unblinded: sender includes final hop details in trampoline onion
+  - Blinded: sender includes encrypted data in trampoline onion
+- Exit to blinded path:
+  - Sender receives a blinded path
+  - Instructs last trampoline to route to introduction node
+  - Puts blinded path information inside of subsequent trampoline
+    payloads (blinded forward + blinded receive).
+
+`build_onion_payloads_callback`:
+- If we have `BlindedTailDetails::DirectEntry`:
+  - Create a blinded receive at the end of the route
+  - Create blinded forwards up until it, providing blinding point to
+    the first one (the introduction node)
+- If we have `BlindedTailDetails::TrampolineEntry`:
+  - If there's a blinding point present, create `BlindedTrampolineEntrypoint`
+  - Otherwise create `TrampolineEntrypoint`
+
+Key difference:
+- `DirectEntry`: we're just using a blinded path, and we should push
+  multiple hops into our path for blinded forwards.
+- `TrampolineEntry`: we're using trampoline forwading, and should push
+  a trampoline onion which has already wrapped each of our blinded
+  payloads in subsequent inner onions.
+
+Note: LDK only supports the case where we're given a blinded path and
+put the information inside of the trampoline onions, using each hop as
+a blinded trampoline.
+
+Thoughts:
+- We should just be able to provide the right type of iter and we'll be
+  fine? When we have a pre-built trampoline packet it's just a
+  TrampolineEntrypoint?
+- we need to call `build_onion_payloads_callback` with a TrampolineEntrypoint
+
+Forwarding:
+- When we receive a payload with a trampoline onion inside of it, we
+  decode the inner onion and distinguish between the following:
+  - `TrampolineForward`: given pubkey of next node
+  - `BlindedFoward`: given forwarding details inside of blinded data
+  - `Receive`: we're receiving and the person who sent knows it
+  - `BlindedRecieve`: we've received via a blinded path
+  - We fail if:
+    - We get a forward with no next hop data
+    - We get a receive with next hop data
+- Regardless of whether we got a `TrampolineForward` or a
+  `TrampolineBlindedForward`, we'll create `NextPacketDetails` with
+  the pubkey of the next node in it.
+
+Note: LDK doesn't currently support the case where you just throw some
+blinded paths into the *outer* onion and then make a payment to them.
+This is a workaround for when the recipient doesn't support trampoline.
+I'm not sure whether we need to do this?
+
+Note: For now, I'm going to ignore the above case and just work with
+the "everyone supports trampoline" case.
+
+Issue:
+- We only add a `TrampolineEntry` if we've got a blinded path and there
+  is Some `trampoline_packet`.
+- For forwading, we may have a `trampoline_packet` which doesn't have
+  any blinded path attached to it.
+
+Q: I think that pairing the blinded path with trampoline was a mistake
+that comes from only wanting to support them together in receives?
+- In a world where 
+
 ## ln: handle trampoline without validating in process pending
 
 It's okay to not process because they'll go from here to process
 receives.
 
-Claude Planning (read this!):
-
-
-  Current Architecture
-
-  1. The Trait System:
-
-  The codebase uses a OnionPayload<'a, 'b> trait to abstract over two
-  payload types:
-  - OutboundOnionPayload - for regular (outer) onions
-  - OutboundTrampolinePayload - for trampoline (inner) onions
-
-  The trait provides factory methods:
-  trait OnionPayload {
-      fn new_forward(...)          // Intermediate hop
-      fn new_receive(...)          // Final receive
-      fn new_blinded_forward(...)  // Blinded intermediate
-      fn new_blinded_receive(...)  // Blinded final
-      fn new_trampoline_entry(...) // Trampoline entrypoint
-  }
-
-  2. The Payload Types (OutboundOnionPayload variants):
-  - Forward - Regular intermediate hop
-  - Receive - Final hop (BOLT11/BOLT12)
-  - BlindedForward - Blinded intermediate
-  - BlindedReceive - Blinded final
-  - TrampolineEntrypoint - Final hop that contains trampoline packet
-  - BlindedTrampolineEntrypoint - Trampoline entrypoint with blinding
-
-  3. The Building Flow:
-
-  create_payment_onion_internal()
-    ↓
-    IF blinded_tail.trampoline_hops exists:
-      build_trampoline_onion_payloads() → builds inner trampoline onion
-      ↓
-      trampoline_packet_option = Some(packet)
-    ↓
-    build_onion_payloads(trampoline_packet_option)
-      ↓
-      build_onion_payloads_callback()
-        ↓
-        For each hop (reverse):
-          if final hop (idx == 0):
-            match blinded_tail:
-              Some(DirectEntry) → BlindedReceive
-              Some(TrampolineEntry) → TrampolineEntrypoint  ← ONLY if
-  blinded_tail exists
-              None → Receive
-          else:
-            Forward or BlindedForward
-
-  The Problem
-
-  When forwarding a trampoline payment:
-  - You have a pre-built trampoline_packet (from incoming onion)
-  - You DON'T have blinded_tail.trampoline_hops (you're not building
-  the inner onion)
-  - You need to create TrampolineEntrypoint as final hop
-  - But build_onion_payloads_callback only creates TrampolineEntrypoint
-   when blinded_tail exists (line 576-590)
-
-  Current workaround: create_trampoline_forward_onion does
-  post-processing to replace Receive with TrampolineEntrypoint
-
-  Clean Refactoring Proposal
-
-  Step 1: Create explicit final hop type enum
-
-  /// Specifies what type of final hop to include in the onion
-  pub(super) enum FinalHopSpec<'a> {
-      /// Regular receive (BOLT11 with payment_secret)
-      Receive,
-      /// Keysend receive
-      ReceiveKeysend,
-      /// BOLT12 invoice_request receive
-      ReceiveInvoiceRequest(&'a InvoiceRequest),
-      /// Build inner trampoline onion from
-  blinded_tail.trampoline_hops (originating)
-      BuildTrampolineOnion,
-      /// Use pre-built trampoline packet (forwarding)
-      ForwardTrampolinePacket {
-          packet: msgs::TrampolineOnionPacket,
-          blinding_point: Option<PublicKey>,
-      },
-  }
-
-  Step 2: Update build_onion_payloads signature
-
-  pub(super) fn build_onion_payloads<'a>(
-      path: &'a Path,
-      total_msat: u64,
-      recipient_onion: &'a RecipientOnionFields,  // payment_secret,
-  metadata, custom_tlvs
-      starting_htlc_offset: u32,
-      keysend_preimage: Option<PaymentPreimage>,  // Keep for trait
-  compatibility
-      invoice_request: Option<&'a InvoiceRequest>, // Keep for trait
-  compatibility
-      final_hop: FinalHopSpec<'a>,               // NEW - explicit
-  final hop type
-  ) -> Result<(Vec<msgs::OutboundOnionPayload<'a>>, u64, u32),
-  APIError>
-
-  Step 3: Refactor BlindedTailDetails enum
-
-  enum BlindedTailDetails<'a, I: Iterator<Item = &'a BlindedHop>> {
-      /// Blinded path receive - use encrypted hops
-      DirectEntry {
-          hops: I,
-          blinding_point: PublicKey,
-          final_value_msat: u64,
-          excess_final_cltv_expiry_delta: u32,
-      },
-      // Remove TrampolineEntry - no longer needed
-  }
-
-  Step 4: Update build_onion_payloads_callback logic
-
-  fn build_onion_payloads_callback(..., final_hop: FinalHopSpec<'a>,
-  ...) {
-      for (idx, hop) in hops.rev().enumerate() {
-          if idx == 0 {
-              match (blinded_tail.take(), final_hop) {
-                  // Blinded receive
-                  (Some(DirectEntry { ... }), _) => {
-                      // Create BlindedReceive payloads
-                  },
-
-                  // Build trampoline onion from
-  blinded_tail.trampoline_hops
-                  (None, FinalHopSpec::BuildTrampolineOnion) => {
-                      let packet =
-  build_inner_trampoline_onion(path.blinded_tail)?;
-                      callback(OP::new_trampoline_entry(..., packet)?);
-                  },
-
-                  // Forward with pre-built trampoline packet
-                  (None, FinalHopSpec::ForwardTrampolinePacket {
-  packet, blinding_point }) => {
-                      match blinding_point {
-                          None => callback(OP::TrampolineEntrypoint {
-  ... packet }),
-                          Some(bp) =>
-  callback(OP::BlindedTrampolineEntrypoint { ... packet,
-  current_path_key: bp }),
-                      }
-                  },
-
-                  // Regular receives
-                  (None, FinalHopSpec::Receive) => {
-                      callback(OP::new_receive(...)?);
-                  },
-                  (None, FinalHopSpec::ReceiveKeysend) => {
-                      callback(OP::new_receive(...,
-  keysend_preimage)?);
-                  },
-                  (None, FinalHopSpec::ReceiveInvoiceRequest(inv)) => {
-                      // Use invoice_request in BlindedReceive if
-  needed
-                  },
-              }
-          }
-      }
-  }
-
-  Step 5: Simplify create_payment_onion_internal
-
-  pub(crate) fn create_payment_onion_internal<T: secp256k1::Signing>(
-      ...
-      trampoline_forward_info: Option<&NextTrampolineHopInfo>,
-  ) -> Result<(msgs::OnionPacket, u64, u32), APIError> {
-
-      let final_hop = if let Some(forward_info) =
-  trampoline_forward_info {
-          // Forwarding case - use pre-built packet
-          FinalHopSpec::ForwardTrampolinePacket {
-              packet: forward_info.onion_packet.clone(),
-              blinding_point: forward_info.blinding_point,
-          }
-      } else if path.blinded_tail.as_ref().map_or(false, |t|
-  !t.trampoline_hops.is_empty()) {
-          // Originating case - build inner onion
-          FinalHopSpec::BuildTrampolineOnion
-      } else if keysend_preimage.is_some() {
-          FinalHopSpec::ReceiveKeysend
-      } else if invoice_request.is_some() {
-          FinalHopSpec::ReceiveInvoiceRequest(invoice_request.unwrap())
-      } else {
-          FinalHopSpec::Receive
-      };
-
-      let (onion_payloads, htlc_msat, htlc_cltv) =
-  build_onion_payloads(
-          path, total_msat, recipient_onion, cur_block_height,
-          keysend_preimage, invoice_request,
-          final_hop,
-      )?;
-
-      // ... rest unchanged
-  }
-
-  Step 6: Eliminate create_trampoline_forward_onion
-
-  No longer needed - everything goes through
-  create_payment_onion_internal
-
-  Step 7: Update channelmanager.rs
-
-  // Remove branching - always use create_payment_onion
-  let (onion_packet, htlc_msat, htlc_cltv) =
-  onion_utils::create_payment_onion(
-      &self.secp_ctx,
-      &path,
-      &session_priv,
-      total_value,
-      recipient_onion,
-      cur_height,
-      payment_hash,
-      keysend_preimage,
-      invoice_request,
-      trampoline_forward_info,  // Pass through
-      prng_seed,
-  )?;
-
-  Benefits
-
-  1. Single code path - No branching between different onion creation
-  functions
-  2. Explicit intent - FinalHopSpec makes it crystal clear what type of
-   final hop you want
-  3. Type safety - Can't accidentally combine incompatible parameters
-  4. No post-processing - Build the right payload directly
-  5. Cleaner separation - Building vs forwarding trampoline onions is
-  explicit
-  6. Supports all cases - Blinded outer routing works for both
-  originating and forwarding
-
-  Does this approach make sense for your use case?
