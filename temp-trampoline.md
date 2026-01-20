@@ -200,3 +200,58 @@ that comes from only wanting to support them together in receives?
 It's okay to not process because they'll go from here to process
 receives.
 
+## Incoming HTLC Accumulation
+
+We need to accumulate in the same way that we do for MPP payments.
+- `process_receive_htlcs` is the starting point for all of this
+- This will be called for _every_ incoming trampoline HTLC that arrives.
+
+What does this do:
+- Go through each pending_forward
+- Match on the type 
+- Creates a ClaimableHTLC struct
+- Starts to track `committed_to_claimable` 
+- Check if we konw the preimage, otherwise set to None
+- Match on the `onion_payload` type to do checking for the
+  specific type of receive (eg, check payment data, validate)
+- Call `check_total_value`
+ - Fail if we currently have a pending claim
+ - Add to `claimable_payemnts`, noting if we're already
+   `committed_to_claimable` (ie, an entry is already there)
+  - Check that onion fields are the same 
+  - Check the total amount on the HTLC is satisfied
+    - Push to `claimable_payments` if it is ok
+    - Pushes an event
+
+What do we need to change:
+- Add matching for trampoline payment
+- Add an onion type (if avoid if we can) for trampoline
+- Add a payment purpose for trampoline
+- When we're fully accumulated, we should dispatch the payment
+
+Q: what do we do with `pending_claimable`?
+
+
+Breaking up what we have:
+`outbound_payments`
+- Add to `pay_route_internal`
+- Add to `create_pending_payment`
+- Add to `PendingOutbound`
+- `send_payment_for_trampoline`
+- `trampoline_htlc_failed` 
+
+`channelmanager`
+- `send_payment_along_path`:
+  - creates onion for trampoline or payment
+  - creates source accordingly
+- `process_pending_update_add_htlcs`:
+  - Adds trampoline to validation (but doesn't check it)
+- `process_receive_htlcs`:
+  ! This is what's going to need to change when we add accumulation !
+  ! We still want all of this logic, but we need to call it after acc !
+  - Processed blinding point
+  - Calculates fees for trampoline
+  - Setup parameters for trampoline payment
+  - `send_payment_for_trampoline_forward` 
+- `fail_backwards_internal`:
+  - checks in with `outbound_payments` that we should actually fail back
