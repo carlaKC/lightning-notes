@@ -32,6 +32,19 @@ impl on `nostd`?
 
 ## High Level Review
 
+- Need to rework locking to mimic patterns in channelmanager (per peer
+  locking, allowing parallel updates). Per-channel locking! Otherwise
+  we're introducing a bottleneck.
+
+Currently: we hold the per-peer state that we're acting on, so for
+example we can add a channel for peer A while forwarding a HTLC on peer
+B.
+
+Now: when we add a channel on peer A, we need to hold the reputation
+manager lock, which will also hold up forwarding the HTLC on peer B.
+
+Suggestion: split up incoming/outgoing with separate locks?
+
 1200 lines for reputation manager
 1000 lines of tests
 
@@ -76,5 +89,4 @@ Q: Use a hashset for `available_slots` and `congestion_htlcs_from`
 Q: Pass time in from caller, we can possibly fix for multiple htlcs?
    I think that we already have it available for most HTLCs?
 
-Discuss:
-- Reviewing on fork vs reviewing on LDK (?)
+Q: Do we need to persist the Config to be able to restart? 
