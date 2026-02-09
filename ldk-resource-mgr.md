@@ -90,3 +90,26 @@ Q: Pass time in from caller, we can possibly fix for multiple htlcs?
    I think that we already have it available for most HTLCs?
 
 Q: Do we need to persist the Config to be able to restart? 
+
+## Second Pass
+
+
+Comments for later:
+- What happens if we restart with different bucket sizes?
+- `channel_slots`: it is actually better to use a vec for <20
+  (vs a hashmap which would have faster lookup).
+- `channel_slots`: pull vec + salt out into a struct
+
+Locking:
+
+`add_channel`:
+- `per_peer_state.read`
+  - `peer_state.lock()`
+
+`remove_channel`:
+- `per_peer_state.read`
+  - `peer_state.lock()`
+
+`add_htlc`:
+- `per_peer_state.read`
+  - `peer_state.lock`
