@@ -41,9 +41,18 @@ set of channels being monitored.
 
 - `release_pending_monitor_events`
 
+## Monitor / Manager 
 
+- `ChannelMonitor` *must* be written on `update_channel` (either on
+  return, or on completion of asynchronous write).
+- `ChannelManager` writes happen out of bound, and it is frozen while
+  the write is happening.
+- These can be out of sync, and we'll force close channels if what
+  we have in `ChannelMonitor` doesn't match `ChannelManager`.
 
-## Outstanding questions
-
-Q: Why does `ChannelManager` need to have a map of monitors, we only
-really use them in `read`?
+We coordinate with the `update_id` for our `ChannelMonitor`.
+- If they're equal, great - we're in sync.
+- If `ChannelManager` > `ChannelMonitor`:
+- If `ChannelManager` < `ChannelMonitor`: the channel manager doesn't
+  know what it missed and can't replay anything so it'll force close
+  the channel (all that info is in `ChannelMonitor`, and safe to use).
