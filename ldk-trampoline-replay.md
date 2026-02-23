@@ -271,7 +271,7 @@ as part of `inbound_forwarded_htlcs`, so it will be tracked in our
 `already_forwarded_htlcs` and then pruned by the presence of a matching
 HTLC in `pending_outbound_htlcs`.
 
-### Outbound HTLC Settle
+### HTLC Settle
 
 By this stage our inbound HTLC is recorded as
 `InboundUpdateAdd::Forwarded`, so we're not at risk of a duplicate
@@ -307,3 +307,42 @@ our claim replays because we have the preimage on the inbound monitor.
 
 The same is true for updates to the inbound monitor to settle the
 incoming HTLC back.
+
+### HTLC Fail
+
+By this stage our inbound HTLC is recorded as
+`InboundUpdateAdd::Forwarded`, so we're not at risk of a duplicate
+forward. It is added in `already_forwarded_htlcs` on restart.
+
+- `ChannelMonitor`(outbound): `LatestHolderCommitmentTxInfo` without
+  the HTLC.
+- `ChannelManager`: outbound HTLC is updated to
+  `AwaitingRemoteRevokeToRemove`
+
+If we go down here, the HTLC will be returned by
+`outbound_htlc_forwards`, so it will de-dup `already_forwarded_htlcs`.
+
+- `ChannelMonitor`(outbound): wrote `CommitmentSecret`
+- `ChannelManager`: HTLC is removed from `pending_outbound`
+
+If we go down here, the HTLC will no longer be in our outbound monitor
+or `pending_outbound_htlcs`. It is still added to
+`already_forwarded_htlcs`, and will not be pruned so we'll proceed
+to fail it back at the end of our replays. We'll successfully fail
+back all of our incoming HTLCs for trampoline as they're all listed
+in `HTLCSource`. This failure is piped through
+`fail_htlc_backwards_interanl`, so we'll hit the necessary trampoline
+failure logic (checking the state of the payment).
+
+- [ ]Q: do we still have the payment here?
+
+- `ChannelMonitor`: `LatestCounterpartyCommitmentTXInfo`
+- `ChannelManager`: inbound HTLC in `LocalRemoved`
+
+As above, we fall all the way through to failure via
+`already_forwarded_htlcs`.
+
+- `ChannelMonitor`(inbound): `CommitmentSecret`
+- `ChannelManager`: inbound HTLC is removed
+
+We're done!
