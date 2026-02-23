@@ -221,7 +221,7 @@ Deduplicating `decode_update_add_htlcs` and `already_forwarded_htlcs`:
     - Updates inbound channel state to reflect that we're now in a
       forwarded state
 
-## Trampoline Thoughts
+## Trampoline Replay
 
 I'm still getting familiar with the `ChannelMonitor` restore project, but I think that the following changes would be necessary for trampoline:
 
@@ -244,16 +244,19 @@ Trampoline forward processing:
 - `ChannelMonitor`: no update.
 - `ChannelManager`: processing pipeline removed the HTLC from
   `forward_htlcs` and adds it to `pending_outbound_htlcs` on the
-  outgoing channel.
+  outgoing channel. We also create a `pending_outbound_payment` for the
+  trampoline payment.
 
 If we go down before the `ChannelManager` is written, the trampoline
-will be replayed via `decode_update_add_htlcs` as before.
+will be replayed via `decode_update_add_htlcs` as before, and we'll
+re-create the entry in `pending_outbound_payments`.
 
 Trampoline forward dispatched:
 - `ChannelMonitor`(outbound): wrote `LatestCounterpartyCommitmentTXInfo`
 - `ChannelManager`: written with the `LocalAnnounced` in
-  `pending_outbound_htlcs` and the inbound HTLC still in 
-  `InboundUpdateAdd::WithOnion`.
+  `pending_outbound_htlcs`, the inbound HTLC still in 
+  `InboundUpdateAdd::WithOnion` and an entry in
+  `pending_outbound_payments`.
 
 If we go down after this step, we'll re-load the incoming HTLC into
 our `decode_update_add_htlcs` but then de-duplicate it because it's
@@ -278,7 +281,8 @@ By this stage our inbound HTLC is recorded as
 forward. It is added in `already_forwarded_htlcs` on restart.
 
 - `ChannelMonitor`(outbound): wrote commitment where HTLC is claimed.
-- `ChannelManager`: outbound HTLC updated to `RemoteRemoved`
+- `ChannelManager`: outbound HTLC updated to `RemoteRemoved`, and the
+  `pending_outbound_payment` is marked as `Fulfilled`.
 
 If we go down here, `get_all_current_outbound_htlcs` will return the
 `HTLCSource` along with its preimage and replay the claim to all of the
@@ -323,18 +327,19 @@ If we go down here, the HTLC will be returned by
 `outbound_htlc_forwards`, so it will de-dup `already_forwarded_htlcs`.
 
 - `ChannelMonitor`(outbound): wrote `CommitmentSecret`
-- `ChannelManager`: HTLC is removed from `pending_outbound`
+- `ChannelManager`: HTLC is removed from `pending_outbound`, and we
+  remove the payment from `pending_outbound_payments`.
 
 If we go down here, the HTLC will no longer be in our outbound monitor
 or `pending_outbound_htlcs`. It is still added to
 `already_forwarded_htlcs`, and will not be pruned so we'll proceed
 to fail it back at the end of our replays. We'll successfully fail
 back all of our incoming HTLCs for trampoline as they're all listed
-in `HTLCSource`. This failure is piped through
-`fail_htlc_backwards_interanl`, so we'll hit the necessary trampoline
-failure logic (checking the state of the payment).
+in `HTLCSource`.
 
-- [ ]Q: do we still have the payment here?
+This failure is piped through `fail_htlc_backwards_internal`, but our
+trampoline payment is no longer present. We'll just fail the not-found
+payment back with the error we're provided with.
 
 - `ChannelMonitor`: `LatestCounterpartyCommitmentTXInfo`
 - `ChannelManager`: inbound HTLC in `LocalRemoved`
