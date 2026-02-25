@@ -351,3 +351,12 @@ As above, we fall all the way through to failure via
 - `ChannelManager`: inbound HTLC is removed
 
 We're done!
+
+
+- `outbound_htlc_forwards`: doesn't include trampoline
+- `already_forwarded_htlcs`: tracks single prev hop
+- `pending_claims_to_replay`: creates a claim for prev hop data
+- `inbound_forwarded_htlcs`: returns single prev hop
+
+I think these need to be able to recover a whole htlc source and then
+we'll be okay!
