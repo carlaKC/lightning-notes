@@ -355,7 +355,34 @@ Changes that we need to make for incoming changes on `main`:
   multi-htlc trampoline forwards in `outbound_htlc_forwards` and
   `get_all_current_outbound_htlcs` (`HTLCSource` already available).
 - `inbound_forwarded_htlcs`: needs to be able to recover a
-  `TrampolineForwad`.
+  `TrampolineForwad`. Options:
+  - Store all htlcs in `InboundUpdateAdd`
+  - Store individually and aggregate based on presence of trampoline
+    - We *should* always have dispatch information on a trampoline
+      htlcsource if we are going to claim a preimage?? 
+    - We're going to need to have the full `HTLCSource` on hand anyway 
+
+Q: where do we use `inbound_forwarded_htlcs`?
+- We push to `already_forwarded_htlcs` with `prev_hop` and `next_hop`
+- That's used in `prune_forwarded_htlcs`: `OutboundHop` not used
+- `reconcile_pending_htlcs_with_monitor`: falls through to
+  `prune_forwarded_htlcs`
+- We used the `next_hop` to know whether `is_downstream_closed` in
+  our pending claim creation for `pending_claims_to_replay`
 
 `committed_outbound_htlc_sources` is set in `monitor_updating_restored`:
 - It's not persisted so we can change this to send through whole source
+
+We only ever have a single outbound on `TrampolineForward`.
+We have a HTLC source which has all of the previous htlcs.
+
+We don't track this in `InboundUpdateAdd`, because it's used to only
+having one htlc. This is all fine for de-duplicating, except when we
+actually need to push a `pending_claims_to_replay`.
+
+We need to call `claim_funds_internal` for all of our previous hops.
+
+Solution:
+- Store full `HTLCSource`:
+  - Pros: can fully fail back trampoline payments
+  - Cons: duplicate data and duplicate claims
