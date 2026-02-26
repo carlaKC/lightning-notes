@@ -223,8 +223,6 @@ Deduplicating `decode_update_add_htlcs` and `already_forwarded_htlcs`:
 
 ## Trampoline Replay
 
-I'm still getting familiar with the `ChannelMonitor` restore project, but I think that the following changes would be necessary for trampoline:
-
 ### Adding + Forwarding Trampoline
 
 Trampoline committed:
@@ -352,11 +350,12 @@ As above, we fall all the way through to failure via
 
 We're done!
 
+Changes that we need to make for incoming changes on `main`:
+- Use `HTLCSource` instead of `HTLCPreviousHopData` to reconcile
+  multi-htlc trampoline forwards in `outbound_htlc_forwards` and
+  `get_all_current_outbound_htlcs` (`HTLCSource` already available).
+- `inbound_forwarded_htlcs`: needs to be able to recover a
+  `TrampolineForwad`.
 
-- `outbound_htlc_forwards`: doesn't include trampoline
-- `already_forwarded_htlcs`: tracks single prev hop
-- `pending_claims_to_replay`: creates a claim for prev hop data
-- `inbound_forwarded_htlcs`: returns single prev hop
-
-I think these need to be able to recover a whole htlc source and then
-we'll be okay!
+`committed_outbound_htlc_sources` is set in `monitor_updating_restored`:
+- It's not persisted so we can change this to send through whole source
