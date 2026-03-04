@@ -382,7 +382,24 @@ actually need to push a `pending_claims_to_replay`.
 
 We need to call `claim_funds_internal` for all of our previous hops.
 
-Solution:
-- Store full `HTLCSource`:
-  - Pros: can fully fail back trampoline payments
-  - Cons: duplicate data and duplicate claims
+Steps:
+- [x] `already_forwarded_htlcs`: track `HTLCSource` instead of
+  `PreviousHopData`
+- [x] Change `committed_outbound_htlc_sources` to `HTLCSource` instead of
+  `HTLCPreviousHopData`
+- [x] Remove `HTLCPreviousHopData` from `inbound_forwarded_htlcs` (use the
+  source's `previous_hop_data` instead.
+- [x] Add persistence of trampoline to `InboundUpdateAdd`, storing as a
+  completely separate enum (+ appending `OutboundHop`)
+- De-dep trampoline sources + use in replay
+
+`already_forwarded_htlcs`:
+- Gets all of our inbound htlcs that are already recorded as having
+  been forwarded
+- For each previous hop in our source, we add the `htlc_source` to our
+  per-channel map (so there are duplicates).
+
+- Remove all htlcs that have already been forwarded on outbound channels
+- Remove our htlc_source from `already_forwarded_htlcs` (for every
+  channel)
+-> Here if we can match *any* outbound then we know we're done
