@@ -497,3 +497,48 @@ Where do we need this dispatch info?
    reported).
 -> Do we have to do it for every trampoline? Probably, because we could
    have a 1-in-2-out which needs tracking on both.
+
+TLDR:
+
+We use our `already_forwarded_htlcs` in two places:
+- When we have a preimage on the inbound monitor we create a
+  `pending_claims_to_replay` and call `claim_funds_internal`
+- When we have forwarded the HTLC but it is not present on the outbound
+  monitor and we have not got a preimage we call
+  `fail_htlc_backwards_internal`
+
+Right now, both of these only have a single `prev_hop`, and trampoline
+has multiple `prev_hops` (and multiple outbound).
+- `claim_funds_internal`:
+  - We use our `previous_hop_data` to create our event and we claim
+    each previous hop every time
+- `fail_htlc_backwards_internal`:
+  - We use our trampoline information to lookup our outbound payment
+    (but by the time we fail, by the time we reach this it'll be gone).
+  - We fail back each HTLC one at a time 
+
+So:
+- We probably do want all of our HTLCS information here, though we
+  _could_ live with bad events and relying on each inbound to handle
+  its own shit (though this is not what we want generally).
+
+
+We get our `already_forwarded_htlcs` from `inbound_forwarded_htlcs`.
+These currently write a `InboundUpdateAdd` that contains our outbound
+hop and we re-construct our `HTLCSource` from the monitor's information.
+
+We remove entries from `already_forwarded_htlcs` when they are still
+present in `outbound_htlc_forwards` `HTLCSource::prev_hop`. This will
+ensure that if trampoline has _any_ outbound HTLCs still in play,
+they'll be removed because we track _every_ previous htlc in our
+outbound htlcs.
+
+To support multiple inbound HTLCs we can:
+- Write all of the HTLC information in every `InboundUpdateAdd`
+- Collect `InboundUpdateAdd`s with the same trampoline info at the call
+  site.
+
+To support multiple outbound HTLCs we can:
+- Write multiple, and produce multiple `HTLCSource`s for each.
+
+WIP is here: https://github.com/carlaKC/rust-lightning/pull/35
