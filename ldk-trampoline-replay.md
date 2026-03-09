@@ -403,3 +403,97 @@ Steps:
 - Remove our htlc_source from `already_forwarded_htlcs` (for every
   channel)
 -> Here if we can match *any* outbound then we know we're done
+
+# Pre-Draft Runthrough
+
+[wip]: track already_forwarded_htlcs by full HTLCSource
+- `inbound_forwarded_htlcs`: change the type that we're returning to
+  have the whole `HTLCSource`. This returns all of the inbound htlcs
+  that we have in our channel manager that have been marked as being
+  `Committed/Forrwarded`.
+  - This is used to populate `already_forwarded_htlcs`
+  - We go through each `previous_hop_data` on the source and add the
+    htlcs with their full htlc source and next hop
+
+Eg: We have A/B/C inbound and D outbound
+```
+already_forwarded_htlcs:
+(A, hash) -> Source(A/B/C)
+(B, hash) -> Source(A/B/C)
+(C, hash) -> Source(A/B/C)
+```
+
+- `outbound_htlc_forwards`: returns all htlcs in our holding cells or
+  pending outbound that are from forwards (later trampolines too).
+  - If we are reconstructing, we'll de-duplicate all of our
+    `decode_update_add_htlcs` and `already_forwarded_htlcs` against
+    this set:
+    - `decode_update_add_htlcs`: has the set of inbound htlcs that we
+      have not yet recorded as forwarded
+    - `dedup_decode_update_add_htlcs`: goes through each `previous_hop`
+      from our outbound and removes it if it matches (we have forwarded
+      this hop, but not yet persisted that it's forwarded).
+    - `prune_forwarded_htlcs`: goes through each outbound's `htlc_source`
+      and removes from `already_forwarded_htlcs` on that hop's entry
+      if the source is already present.
+      - [ ] This could also be if any hop is shared? Because if it has
+        even a single common hop, it go forwarded?
+
+Q: will the sources definitely be *identical* or will we have to match
+  just on ID?
+- The `outbound_htlc_fowards` is exactly as we reconstructed it.
+- The `already_forwarded_htlcs` is reconstructed in
+  `inbound_forwarded_htlcs`
+
+- We use the entries in `already_forwarded_htlcs` to generate claims.
+  - We match on source equality to make sure we don't have duplicate
+    claims (which is actually harmless, but efficient).
+
+[fixed] De-duplication of trampoline with failed
+[fixed] TrampolineDispatch is overwritten for tramps! How are we creating
+    source for multiple outbound hops / trampolinedispatch
+
+## [wip]: Pass full HTLCSource through in committed_outbound_htlc_sources
+
+- Mostly a mechanical change
+- In `prune_persisted_inbound_htlc_onions`:
+  - We loop through each `HTLCSource`
+    - We loop through each `previous_hop_data`
+      - Get the channel and prune the onion accordingly.
+
+As illustrated above, this means we'll apply this on each of our inbound
+HTLCs.
+
+[wip]: support replays for multiple outbound hops
+
+- `inbound_forwarded_htlcs`: returns multiple `OutboundHop`s:
+  - This is pushed into `already_forwarded_htlcs`
+  - When we generate claims, we'll push one per outbound channel
+  - Likewise for failures
+
+Q: we are pushing a claim for *every* outbound, but we don't know
+  which we are actually needing to free (could have claimed on any).
+  Since we go by source, we really only need to run this once?
+  - If we properly generate trampoline sources, then we don't have to
+    worry about this and can drop this commit completely.
+
+Q: once we get to this point, are we *certain* that the outbound
+   htlc is completely cleared? If yes:
+  - It doesn't matter which outbound channel we hit
+  - It doesn't matter what trampoline dispatch we use
+
+[wip] Persist trampoline information in InboundUpdateAdd
+
+[fixed] Needs some cleaning up generally
+[fixed] We overwrite dispatch information
+
+Where do we need this dispatch info?
+- In our fail/claim flow to report to outbound payments
+
+[Q]: do we actually need to store all the outbound hop info for
+     trampoline?
+-> It looks like we do to be able to resolve the trampoline payment
+   properly (without it, the payment gets marooned/ final state is not
+   reported).
+-> Do we have to do it for every trampoline? Probably, because we could
+   have a 1-in-2-out which needs tracking on both.
