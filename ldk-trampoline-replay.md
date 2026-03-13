@@ -522,7 +522,6 @@ So:
   _could_ live with bad events and relying on each inbound to handle
   its own shit (though this is not what we want generally).
 
-
 We get our `already_forwarded_htlcs` from `inbound_forwarded_htlcs`.
 These currently write a `InboundUpdateAdd` that contains our outbound
 hop and we re-construct our `HTLCSource` from the monitor's information.
